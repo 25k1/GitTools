@@ -1,0 +1,15 @@
+build/
+out/
+build-clang/
+.vs/
+.vscode/
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+*.user
+*.suo
+*.aps
+*.exp
+*.lib
+*.pdb
+*.ilk
