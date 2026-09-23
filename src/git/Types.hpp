@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace git_tools {
 
@@ -11,7 +12,6 @@ struct Commit {
     std::wstring authorEmail;
     std::wstring date;
     std::wstring subject;
-    std::wstring message;
 };
 
 enum class FileChangeKind {
@@ -31,6 +31,12 @@ struct FileChange {
     std::wstring   oldPath;
     int            insertions = -1;
     int            deletions  = -1;
+};
+
+struct CommitDetails {
+    std::wstring            sha;
+    std::wstring            message;
+    std::vector<FileChange> changes;
 };
 
 struct Branch {

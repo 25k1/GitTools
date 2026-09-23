@@ -9,7 +9,7 @@ namespace git_tools {
 struct DiffWindowParams {
     std::wstring title;
     std::wstring diffText;
-    std::wstring repoRoot;
+    std::wstring workTree;
 };
 
 int ShowDiffWindow(HWND owner, const DiffWindowParams& params);

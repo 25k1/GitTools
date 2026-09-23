@@ -4,6 +4,8 @@
 
 namespace git_tools {
 
+inline constexpr wchar_t kUnloadFarCommitsKey[] = L"unloadfarcommits";
+
 std::wstring ConfigGet(const std::wstring& key,
                        const std::wstring& fallback = L"");
 

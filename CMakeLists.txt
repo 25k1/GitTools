@@ -136,6 +136,8 @@ add_executable(gittools
     src/cli/Log.cpp
     src/cli/PullLog.cpp
     src/git/Process.cpp
+    src/git/CommitStore.cpp
+    src/git/Compression.cpp
     src/git/Config.cpp
     src/git/Git.cpp
     src/git/Transcript.cpp
@@ -157,6 +159,7 @@ target_link_libraries(gittools PRIVATE
     gdi32
     shell32
     advapi32
+    cabinet
     winmm
 )
 

@@ -89,6 +89,7 @@ std::wstring Trimmed(const std::wstring& s) {
 
 std::wstring RepoFilePath(const std::wstring& repoRoot,
                           const std::wstring& relativePath) {
+    if (repoRoot.empty()) return {};
     std::filesystem::path full =
         std::filesystem::path(repoRoot) / relativePath;
     return full.make_preferred().wstring();

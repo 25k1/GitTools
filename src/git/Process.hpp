@@ -2,8 +2,10 @@
 
 #include <windows.h>
 
+#include <functional>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace git_tools {
@@ -98,10 +100,14 @@ private:
     bool       cancelled_ = false;
 };
 
+using OutputSink = std::function<void(std::string_view)>;
+
 ProcessResult RunProcess(const std::wstring& executable,
                          const std::vector<std::wstring>& args,
                          const std::wstring& cwd,
                          StdioMode stdio = StdioMode::Capture,
-                         ProcessCanceller* cancel = nullptr);
+                         ProcessCanceller* cancel = nullptr,
+                         const OutputSink& onStdout = {},
+                         const std::string* input = nullptr);
 
 }

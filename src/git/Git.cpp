@@ -1,8 +1,10 @@
 #include "git/Git.hpp"
 
+#include "git/Config.hpp"
 #include "git/Transcript.hpp"
 #include "ui/Encoding.hpp"
 
+#include <iterator>
 #include <unordered_map>
 
 namespace git_tools {
@@ -10,9 +12,12 @@ namespace git_tools {
 ProcessResult RunGit(const std::vector<std::wstring>& args,
                      const std::wstring& cwd,
                      StdioMode stdio,
-                     ProcessCanceller* cancel) {
+                     ProcessCanceller* cancel,
+                     const OutputSink& onStdout,
+                     const std::string* input) {
     NoteGitStart(args);
-    ProcessResult r = RunProcess(L"git.exe", args, cwd, stdio, cancel);
+    ProcessResult r =
+        RunProcess(L"git.exe", args, cwd, stdio, cancel, onStdout, input);
     if (cancel && cancel->Cancelled()) RecordGitCancelled(args);
     else                               RecordGitRun(args, r);
     return r;
@@ -25,11 +30,20 @@ RepoContext OpenRepo() {
     ProcessResult top = RunGit({L"rev-parse", L"--show-toplevel"}, repo.cwd);
     if (!top.started) {
         repo.errorMessage = L"Failed to launch git:\n\n" + top.errorMessage;
-    } else if (top.exitCode != 0) {
+        return repo;
+    }
+    repo.workTree = TrimmedOutput(top);
+    if (!repo.workTree.empty()) {
+        repo.root = repo.workTree;
+        return repo;
+    }
+
+    ProcessResult gitDir =
+        RunGit({L"rev-parse", L"--absolute-git-dir"}, repo.cwd);
+    repo.root = TrimmedOutput(gitDir);
+    if (repo.root.empty()) {
         repo.errorMessage = L"Not inside a git repository:\n\n" +
-                            Utf8ToWide(RStrip(top.stderrText));
-    } else {
-        repo.root = TrimmedOutput(top);
+                            Utf8ToWide(RStrip(gitDir.stderrText));
     }
     return repo;
 }
@@ -37,6 +51,10 @@ RepoContext OpenRepo() {
 namespace {
 
 constexpr wchar_t kDiffMerges[] = L"--diff-merges=first-parent";
+constexpr wchar_t kLogFormat[]  =
+    L"--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s";
+constexpr wchar_t kLogDate[]    = L"--date=format:%Y-%m-%d %H:%M:%S";
+constexpr size_t  kResidentPages = 8;
 
 std::wstring GitFailure(const wchar_t* what, const ProcessResult& r) {
     if (!r.started) return r.errorMessage;
@@ -158,11 +176,6 @@ std::wstring RStripW(std::wstring s) {
     return s;
 }
 
-std::wstring FirstLine(const std::wstring& s) {
-    size_t nl = s.find(L'\n');
-    return RStripW(nl == std::wstring::npos ? s : s.substr(0, nl));
-}
-
 bool StartsWith(const std::wstring& s, const wchar_t* prefix) {
     return s.rfind(prefix, 0) == 0;
 }
@@ -194,42 +207,195 @@ std::vector<std::wstring> StripFormatArgs(
     return out;
 }
 
+std::vector<std::wstring> DisplayArgs(const std::vector<std::wstring>& args) {
+    std::vector<std::wstring> out;
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::wstring& a = args[i];
+        if (a == L"--") break;
+        if (a == L"--date" && i + 1 < args.size()) {
+            out.push_back(a);
+            out.push_back(args[++i]);
+        } else if (StartsWith(a, L"--date=") || a == L"--relative-date" ||
+                   StartsWith(a, L"--encoding=") ||
+                   a == L"--mailmap" || a == L"--no-mailmap" ||
+                   a == L"--use-mailmap" || a == L"--no-use-mailmap") {
+            out.push_back(a);
+        }
+    }
+    return out;
+}
 
 }
 
-CommitListResult LoadCommitLog(const std::vector<std::wstring>& logArgs,
-                               const std::wstring& cwd) {
-    CommitListResult result;
-
-    std::vector<std::wstring> args{
-        L"log",
-        L"-z",
-        L"--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%B",
-        L"--date=format:%Y-%m-%d %H:%M:%S",
-    };
+CommitLoader::CommitLoader(const std::vector<std::wstring>& logArgs,
+                           const std::wstring& cwd)
+    : cwd_(cwd) {
+    std::vector<std::wstring> args{L"log", L"-z", kLogFormat, kLogDate};
     const std::vector<std::wstring> userArgs = StripFormatArgs(logArgs);
     args.insert(args.end(), userArgs.begin(), userArgs.end());
 
-    ProcessResult r = RunGit(args, cwd);
-    result.errorMessage = GitFailure(L"git log", r);
-    if (!result.errorMessage.empty()) return result;
+    restoreArgs_ = {L"log", L"--no-walk=unsorted", L"--stdin", L"-z",
+                    kLogFormat, kLogDate};
+    const std::vector<std::wstring> display = DisplayArgs(logArgs);
+    restoreArgs_.insert(restoreArgs_.end(), display.begin(), display.end());
 
-    for (const std::wstring& record : SplitOn(Utf8ToWide(r.stdoutText), L'\0')) {
-        size_t start = record.find_first_not_of(L"\r\n");
-        if (start == std::wstring::npos) continue;
-        std::vector<std::wstring> fields =
-            SplitOn(record.substr(start), L'\x1f');
-        if (fields.size() != 6) continue;
-        Commit c;
-        c.fullSha     = std::move(fields[0]);
-        c.shortSha    = std::move(fields[1]);
-        c.author      = std::move(fields[2]);
-        c.authorEmail = std::move(fields[3]);
-        c.date        = std::move(fields[4]);
-        c.message     = RStripW(std::move(fields[5]));
-        c.subject     = FirstLine(c.message);
-        result.commits.push_back(std::move(c));
+    worker_ = std::thread(&CommitLoader::Run, this, std::move(args), cwd);
+}
+
+CommitLoader::~CommitLoader() {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        stop_ = true;
     }
+    canceller_.Cancel();
+    cv_.notify_all();
+    if (worker_.joinable()) worker_.join();
+}
+
+void CommitLoader::Notify(HWND hwnd, UINT message) {
+    bool post = false;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        hwnd_    = hwnd;
+        message_ = message;
+        post     = store_.size() > acked_ && !posted_;
+        if (post) posted_ = true;
+    }
+    if (post) PostMessageW(hwnd, message, 0, 0);
+}
+
+void CommitLoader::Request(size_t count) {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (count <= wanted_) return;
+        wanted_ = count;
+    }
+    cv_.notify_all();
+}
+
+void CommitLoader::WaitFor(size_t count) {
+    Request(count);
+    std::unique_lock<std::mutex> lock(mu_);
+    cv_.wait(lock, [&] { return finished_ || store_.size() >= count; });
+}
+
+size_t CommitLoader::AcknowledgeCount() {
+    std::lock_guard<std::mutex> lock(mu_);
+    posted_ = false;
+    acked_  = store_.size();
+    return acked_;
+}
+
+std::wstring CommitLoader::ErrorMessage() {
+    std::lock_guard<std::mutex> lock(mu_);
+    return error_;
+}
+
+Commit CommitLoader::At(size_t i) {
+    Restore(i);
+    std::lock_guard<std::mutex> lock(mu_);
+    return store_.At(i);
+}
+
+std::wstring CommitLoader::Sha(size_t i) {
+    std::lock_guard<std::mutex> lock(mu_);
+    return store_.Sha(i);
+}
+
+bool CommitLoader::Subject(size_t i, std::wstring& out) {
+    std::lock_guard<std::mutex> lock(mu_);
+    return store_.Subject(i, out);
+}
+
+size_t CommitLoader::IndexOf(std::wstring_view sha) {
+    std::lock_guard<std::mutex> lock(mu_);
+    return store_.IndexOf(sha);
+}
+
+void CommitLoader::SetUnloadFar(bool on) {
+    std::lock_guard<std::mutex> lock(mu_);
+    store_.SetResidentLimit(on ? kResidentPages : 0);
+}
+
+void CommitLoader::Restore(size_t i) {
+    std::string revisions;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!store_.NeedsRestore(i)) return;
+        revisions = store_.Revisions(i);
+    }
+    ProcessResult r = RunGit(restoreArgs_, cwd_, StdioMode::Capture, nullptr,
+                             {}, &revisions);
+    const std::string_view output = (r.started && r.exitCode == 0)
+                                        ? std::string_view(r.stdoutText)
+                                        : std::string_view();
+    std::lock_guard<std::mutex> lock(mu_);
+    if (store_.NeedsRestore(i)) store_.Restore(i, output);
+}
+
+void CommitLoader::Run(std::vector<std::wstring> args, std::wstring cwd) {
+    ProcessResult r = RunGit(args, cwd, StdioMode::Capture, &canceller_,
+                             [this](std::string_view bytes) { Consume(bytes); });
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (stop_) return;
+        error_ = GitFailure(L"git log", r);
+    }
+    Publish({pending_}, true);
+    pending_.clear();
+    pending_.shrink_to_fit();
+}
+
+void CommitLoader::Consume(std::string_view bytes) {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (stop_) return;
+    }
+
+    pending_.append(bytes.data(), bytes.size());
+    std::vector<std::string_view> records;
+    const std::string_view buffered = pending_;
+    size_t start = 0;
+    for (size_t nul = buffered.find('\0'); nul != std::string_view::npos;
+         nul = buffered.find('\0', start)) {
+        records.push_back(buffered.substr(start, nul - start));
+        start = nul + 1;
+    }
+    Publish(std::move(records), false);
+    pending_.erase(0, start);
+
+    std::unique_lock<std::mutex> lock(mu_);
+    cv_.wait(lock, [this] { return stop_ || store_.size() < wanted_; });
+}
+
+void CommitLoader::Publish(std::vector<std::string_view> records,
+                           bool finished) {
+    HWND target  = nullptr;
+    UINT message = 0;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (records.empty() && !finished) return;
+        for (std::string_view record : records) store_.Append(record);
+        if (finished) finished_ = true;
+        if (hwnd_ && !posted_ && store_.size() > acked_) {
+            posted_ = true;
+            target  = hwnd_;
+            message = message_;
+        }
+    }
+    cv_.notify_all();
+    if (target) PostMessageW(target, message, 0, 0);
+}
+
+CommitListResult StartCommitLog(const std::vector<std::wstring>& logArgs,
+                                const std::wstring& cwd,
+                                size_t first) {
+    CommitListResult result;
+    result.loader = std::make_unique<CommitLoader>(logArgs, cwd);
+    result.loader->SetUnloadFar(ConfigGetBool(kUnloadFarCommitsKey, false));
+    result.loader->WaitFor(first);
+    result.count        = result.loader->AcknowledgeCount();
+    result.errorMessage = result.loader->ErrorMessage();
     return result;
 }
 
@@ -254,14 +420,6 @@ std::wstring QueryBranchLabel(const std::vector<std::wstring>& logArgs,
     if (refs.size() == 1) return refs.front();
     return CurrentBranchLabel(cwd);
 }
-
-CommitListResult LoadCommitRange(const std::wstring& oldSha,
-                                 const std::wstring& newSha,
-                                 const std::wstring& cwd) {
-    return LoadCommitLog(RangeLogArgs(oldSha, newSha), cwd);
-}
-
-
 
 std::wstring LoadFilesDiff(const std::wstring& sha,
                            const std::vector<std::wstring>& paths,
@@ -313,22 +471,32 @@ ProcessResult CheckoutBranch(const std::wstring& name,
     return RunGit({L"checkout", name}, cwd);
 }
 
-std::vector<FileChange> LoadCommitChanges(const std::wstring& sha,
-                                          const std::wstring& cwd,
-                                          ProcessCanceller* cancel) {
-    ProcessResult r = RunGit(
-        {L"show", L"--format=", kDiffMerges, L"--name-status", sha},
-        cwd, StdioMode::Capture, cancel);
-    if (!r.started || r.exitCode != 0) return {};
+CommitDetails LoadCommitDetails(const std::wstring& sha,
+                                const std::wstring& cwd,
+                                ProcessCanceller* cancel) {
+    CommitDetails details;
+    details.sha = sha;
 
-    std::vector<FileChange> changes = ParseNameStatus(Utf8ToWide(r.stdoutText));
+    ProcessResult r = RunGit(
+        {L"show", L"--format=%B%x00", kDiffMerges, L"--name-status", sha},
+        cwd, StdioMode::Capture, cancel);
+    if (!r.started || r.exitCode != 0) return details;
+
+    const std::wstring output = Utf8ToWide(r.stdoutText);
+    const size_t nul = output.find(L'\0');
+    if (nul != std::wstring::npos) {
+        details.message = RStripW(output.substr(0, nul));
+        details.changes = ParseNameStatus(output.substr(nul + 1));
+    } else {
+        details.changes = ParseNameStatus(output);
+    }
 
     ProcessResult n = RunGit(
         {L"show", L"--format=", kDiffMerges, L"--numstat", sha},
         cwd, StdioMode::Capture, cancel);
     if (n.started && n.exitCode == 0) {
         auto stats = ParseNumstat(Utf8ToWide(n.stdoutText));
-        for (auto& fc : changes) {
+        for (auto& fc : details.changes) {
             auto it = stats.find(fc.path);
             if (it != stats.end()) {
                 fc.insertions = it->second.insertions;
@@ -336,7 +504,14 @@ std::vector<FileChange> LoadCommitChanges(const std::wstring& sha,
             }
         }
     }
-    return changes;
+    return details;
+}
+
+std::wstring LoadCommitMessage(const std::wstring& sha,
+                               const std::wstring& cwd) {
+    ProcessResult r = RunGit({L"show", L"-s", L"--format=%B", sha}, cwd);
+    if (!r.started || r.exitCode != 0) return {};
+    return RStripW(Utf8ToWide(r.stdoutText));
 }
 
 }

@@ -75,7 +75,8 @@ int RunLogRange(int argc, wchar_t** argv) {
     RepoContext repo;
     if (!OpenRepoOrReport(kRangeTitle, repo)) return 1;
 
-    CommitListResult lr = LoadCommitRange(oldSha, newSha, repo.cwd);
+    CommitListResult lr =
+        StartCommitLog(RangeLogArgs(oldSha, newSha), repo.cwd);
     if (!lr.errorMessage.empty()) {
         ReportDialogError(kRangeTitle, lr.errorMessage);
         return 1;
@@ -83,7 +84,7 @@ int RunLogRange(int argc, wchar_t** argv) {
 
     return ShowLogWindow(repo, oldSha + L".." + newSha,
                          RangeLogArgs(oldSha, newSha),
-                         std::move(lr.commits));
+                         std::move(lr));
 }
 
 }

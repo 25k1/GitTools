@@ -28,18 +28,17 @@ int RunLogInChild(const std::vector<std::wstring>& logArgs) {
     RepoContext repo;
     if (!OpenRepoOrReport(kTitle, repo)) return 1;
 
-    CommitListResult lr = LoadCommitLog(logArgs, repo.cwd);
+    CommitListResult lr = StartCommitLog(logArgs, repo.cwd);
     if (!lr.errorMessage.empty()) {
         ReportDialogError(kTitle, lr.errorMessage);
         return 1;
     }
-    if (lr.commits.empty()) return 0;
+    if (lr.count == 0) return 0;
 
     std::wstring query = L"log";
     if (!logArgs.empty()) query += L" " + JoinArgs(logArgs);
 
-    return ShowLogWindow(repo, std::move(query), logArgs,
-                         std::move(lr.commits));
+    return ShowLogWindow(repo, std::move(query), logArgs, std::move(lr));
 }
 
 }

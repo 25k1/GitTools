@@ -12,6 +12,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -29,6 +30,7 @@ constexpr int  kIdStatusBar      = 1005;
 constexpr UINT WM_GITTOOLS_DETAIL     = WM_APP + 1;
 constexpr UINT WM_GITTOOLS_TRANSCRIPT = WM_APP + 2;
 constexpr UINT WM_GITTOOLS_ACTIVATE   = WM_APP + 3;
+constexpr UINT WM_GITTOOLS_COMMITS    = WM_APP + 4;
 
 constexpr UINT_PTR kLoadTimerId = 1;
 constexpr UINT     kLoadDelayMs = 250;
@@ -53,6 +55,10 @@ struct LogWindowData {
     bool                     loadPending  = false;
     ProcessCanceller         canceller;
     std::vector<FileChange>  currentChanges;
+    size_t                   shown        = 0;
+    std::wstring             dispText;
+    std::wstring             detailSha;
+    std::wstring             detailMessage;
 
     HWND                     hwnd        = nullptr;
     std::thread              worker;
@@ -63,11 +69,22 @@ struct LogWindowData {
     std::wstring             pendingSha;
     std::atomic<int>         nextToken{0};
 
-    size_t commitCount() const { return params.commits.size(); }
+    size_t commitCount() const { return shown; }
 
-    const Commit* selectedCommit() const {
-        int i = SelectedIndexIn(hCommitList, commitCount());
-        return (i < 0) ? nullptr : &params.commits[i];
+    int selectedIndex() const {
+        return SelectedIndexIn(hCommitList, commitCount());
+    }
+
+    std::optional<Commit> selectedCommit() const {
+        const int i = selectedIndex();
+        if (i < 0) return std::nullopt;
+        return params.loader->At(static_cast<size_t>(i));
+    }
+
+    std::wstring selectedSha() const {
+        const int i = selectedIndex();
+        return (i < 0) ? std::wstring()
+                       : params.loader->Sha(static_cast<size_t>(i));
     }
 
     const FileChange* selectedChange() const {
@@ -163,7 +180,7 @@ std::wstring SeparateFileDiffs(const std::wstring& text) {
 void OpenDiffForSelection(LogWindowData* d, HWND owner) {
     if (!d) return;
     const std::vector<const FileChange*> selection = d->selectedChanges();
-    const Commit* c = d->selectedCommit();
+    const std::optional<Commit> c = d->selectedCommit();
     if (selection.empty() || !c) return;
 
     std::vector<std::wstring> paths;
@@ -182,7 +199,7 @@ void OpenDiffForSelection(LogWindowData* d, HWND owner) {
     p.title += L" - " + c->shortSha;
     p.diffText = SeparateFileDiffs(
         LoadFilesDiff(c->fullSha, paths, d->params.repoRoot));
-    p.repoRoot = d->params.repoRoot;
+    p.workTree = d->params.workTree;
     ShowDiffWindow(owner, p);
 }
 
@@ -193,15 +210,36 @@ std::wstring FormatCount(int value, bool suppressed) {
     return std::to_wstring(value);
 }
 
-void ShowCommitMessage(LogWindowData* d) {
-    const Commit* c = d->selectedCommit();
-    SetReadOnlyText(d->hMsgEdit,
-                    c ? c->fullSha + L"\n\n" + c->message : std::wstring());
+std::wstring KnownMessage(const LogWindowData* d, const Commit& c) {
+    if (c.fullSha == d->detailSha && !d->detailMessage.empty()) {
+        return d->detailMessage;
+    }
+    return c.subject;
 }
 
-void ApplyCommitChanges(LogWindowData* d, std::vector<FileChange>&& changes) {
+std::wstring FullMessage(const LogWindowData* d, const Commit& c) {
+    if (c.fullSha == d->detailSha && !d->detailMessage.empty()) {
+        return d->detailMessage;
+    }
+    std::wstring message = LoadCommitMessage(c.fullSha, d->params.repoRoot);
+    return message.empty() ? c.subject : message;
+}
+
+void ShowCommitMessage(LogWindowData* d) {
+    const std::optional<Commit> c = d->selectedCommit();
+    const std::wstring text =
+        c ? c->fullSha + L"\n\n" + KnownMessage(d, *c) : std::wstring();
+    if (ControlText(d->hMsgEdit) == NormalizeCRLF(text)) return;
+    SetReadOnlyText(d->hMsgEdit, text);
+}
+
+void ApplyCommitDetails(LogWindowData* d, CommitDetails&& details) {
+    d->detailSha     = std::move(details.sha);
+    d->detailMessage = std::move(details.message);
+    ShowCommitMessage(d);
+
     SendMessageW(d->hChgList, LVM_DELETEALLITEMS, 0, 0);
-    d->currentChanges = std::move(changes);
+    d->currentChanges = std::move(details.changes);
 
     int row = 0;
     for (const auto& fc : d->currentChanges) {
@@ -248,39 +286,57 @@ void ScheduleCommitLoad(LogWindowData* d, HWND hwnd) {
 
 void ReloadSelectedCommit(LogWindowData* d) {
     ShowCommitMessage(d);
-    if (const Commit* c = d->selectedCommit()) DispatchCommitLoad(d, c->fullSha);
+    const std::wstring sha = d->selectedSha();
+    if (!sha.empty()) DispatchCommitLoad(d, sha);
+}
+
+void AppendLoadedCommits(LogWindowData* d) {
+    if (!d->params.loader) return;
+    const size_t count = d->params.loader->AcknowledgeCount();
+    if (count == d->shown) return;
+    d->shown = count;
+    ListView_SetItemCountEx(d->hCommitList,
+                            static_cast<int>(d->commitCount()),
+                            LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL);
+}
+
+void RequestCommitsNear(LogWindowData* d, int row) {
+    if (!d->params.loader || row < 0) return;
+    const size_t next = static_cast<size_t>(row) + 1;
+    if (next + kCommitPage / 2 >= d->commitCount()) {
+        d->params.loader->Request(next + kCommitPage);
+    }
 }
 
 void ReloadCommitList(LogWindowData* d, HWND hwnd) {
     RefreshTitle(d, hwnd);
 
-    std::wstring keepSha;
-    if (const Commit* c = d->selectedCommit()) keepSha = c->fullSha;
+    const int          keepRow = d->selectedIndex();
+    const std::wstring keepSha = d->selectedSha();
 
-    CommitListResult lr = LoadCommitLog(d->params.logArgs, d->params.cwd);
+    CommitListResult lr = StartCommitLog(
+        d->params.logArgs, d->params.cwd,
+        static_cast<size_t>(keepRow + 1) + kCommitPage);
     if (!lr.errorMessage.empty()) {
         ShowError(hwnd, L"Reload failed", lr.errorMessage);
         return;
     }
-    d->params.commits = std::move(lr.commits);
+    d->params.loader = std::move(lr.loader);
+    d->shown         = lr.count;
+    d->params.loader->Notify(hwnd, WM_GITTOOLS_COMMITS);
 
     ListView_SetItemCountEx(d->hCommitList,
                             static_cast<int>(d->commitCount()),
                             LVSICF_NOSCROLL);
     InvalidateRect(d->hCommitList, nullptr, TRUE);
 
-    if (d->params.commits.empty()) {
+    if (d->shown == 0) {
         ClearDetailPanes(d);
         return;
     }
 
-    int row = 0;
-    for (size_t i = 0; i < d->params.commits.size(); ++i) {
-        if (d->params.commits[i].fullSha == keepSha) {
-            row = static_cast<int>(i);
-            break;
-        }
-    }
+    const size_t found = d->params.loader->IndexOf(keepSha);
+    const int    row   = (found < d->shown) ? static_cast<int>(found) : 0;
     SelectRow(d->hCommitList, row);
     ListView_EnsureVisible(d->hCommitList, row, FALSE);
 
@@ -303,19 +359,19 @@ void WorkerLoop(LogWindowData* d) {
         }
 
         d->canceller.Reset();
-        auto* changes = new std::vector<FileChange>(
-            LoadCommitChanges(sha, d->params.repoRoot, &d->canceller));
+        auto* details = new CommitDetails(
+            LoadCommitDetails(sha, d->params.repoRoot, &d->canceller));
 
         {
             std::lock_guard<std::mutex> lock(d->mu);
             if (d->stop) {
-                delete changes;
+                delete details;
                 return;
             }
         }
         PostMessageW(d->hwnd, WM_GITTOOLS_DETAIL,
                      static_cast<WPARAM>(token),
-                     reinterpret_cast<LPARAM>(changes));
+                     reinterpret_cast<LPARAM>(details));
     }
 }
 
@@ -423,7 +479,11 @@ int FindCommitByPrefix(LogWindowData* d, const NMLVFINDITEMW* fi) {
     for (int n = 0; n < span; ++n) {
         int i = start + n;
         if (i >= count) i -= count;
-        if (StartsWithNoCase(d->params.commits[i].subject, prefix)) return i;
+        std::wstring subject;
+        if (d->params.loader->Subject(i, subject) &&
+            StartsWithNoCase(subject, prefix)) {
+            return i;
+        }
     }
     return -1;
 }
@@ -456,12 +516,8 @@ void ShowCommitsContextMenu(LogWindowData* d, HWND owner, LPARAM lParam) {
     POINT pt;
     if (!ContextMenuAnchor(d->hCommitList, lParam, pt)) return;
 
-    const Commit* c = d->selectedCommit();
+    const std::optional<Commit> c = d->selectedCommit();
     if (!c) return;
-    const std::wstring sha     = c->fullSha;
-    const std::wstring author  = c->author;
-    const std::wstring email   = c->authorEmail;
-    const std::wstring message = c->message;
 
     int cmd = TrackMenu(owner, pt, {
         {kCmdCopyHash,    L"Copy &hash"},
@@ -471,15 +527,15 @@ void ShowCommitsContextMenu(LogWindowData* d, HWND owner, LPARAM lParam) {
     });
 
     if (cmd == kCmdCopyHash) {
-        SetClipboardText(owner, sha);
+        SetClipboardText(owner, c->fullSha);
     } else if (cmd == kCmdCopyMessage) {
-        SetClipboardText(owner, message);
+        SetClipboardText(owner, FullMessage(d, *c));
     } else if (cmd == kCmdCopyAuthor) {
-        SetClipboardText(owner, email.empty()
-                                    ? author
-                                    : author + L" <" + email + L">");
+        SetClipboardText(owner, c->authorEmail.empty()
+                                    ? c->author
+                                    : c->author + L" <" + c->authorEmail + L">");
     } else if (cmd == kCmdCopyEmail) {
-        SetClipboardText(owner, email);
+        SetClipboardText(owner, c->authorEmail);
     }
 }
 
@@ -490,7 +546,7 @@ void ShowChangesContextMenu(LogWindowData* d, HWND owner, LPARAM lParam) {
     const FileChange* fc = d->selectedChange();
     if (!fc) return;
 
-    const std::wstring path = RepoFilePath(d->params.repoRoot, fc->path);
+    const std::wstring path = RepoFilePath(d->params.workTree, fc->path);
 
     const std::wstring editor = FindEditor();
 
@@ -523,9 +579,8 @@ bool OnListKeyDown(LogWindowData* d, HWND hwnd, UINT_PTR listId, WORD vkey) {
     }
     if (ctrl && vkey == 'C') {
         if (listId == kIdCommitList) {
-            if (const Commit* c = d->selectedCommit()) {
-                SetClipboardText(hwnd, c->fullSha);
-            }
+            const std::wstring sha = d->selectedSha();
+            if (!sha.empty()) SetClipboardText(hwnd, sha);
         } else {
             std::wstring paths;
             for (const FileChange* fc : d->selectedChanges()) {
@@ -548,12 +603,18 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_INITDIALOG: {
             d = AttachDialogState<LogWindowData>(hwnd, lParam);
             d->hwnd = hwnd;
+            if (d->params.loader) {
+                d->shown = d->params.loader->AcknowledgeCount();
+            }
 
             CreateChildren(d, hwnd);
             AttachFileMenu(hwnd);
             RefreshTranscript(d);
 
             d->worker = std::thread(WorkerLoop, d);
+            if (d->params.loader) {
+                d->params.loader->Notify(hwnd, WM_GITTOOLS_COMMITS);
+            }
             if (d->commitCount() > 0) SelectRow(d->hCommitList, 0);
 
             RECT rc;
@@ -580,15 +641,18 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_GITTOOLS_TRANSCRIPT:
             if (d) RefreshTranscript(d);
             return TRUE;
+        case WM_GITTOOLS_COMMITS:
+            if (d) AppendLoadedCommits(d);
+            return TRUE;
         case WM_GITTOOLS_DETAIL: {
             int token = static_cast<int>(wParam);
-            auto* changes = reinterpret_cast<std::vector<FileChange>*>(lParam);
+            auto* details = reinterpret_cast<CommitDetails*>(lParam);
             if (d && token == d->nextToken.load()) {
-                ApplyCommitChanges(d, std::move(*changes));
+                ApplyCommitDetails(d, std::move(*details));
                 d->loadPending = false;
                 RefreshStatus(d);
             }
-            delete changes;
+            delete details;
             return TRUE;
         }
         case WM_CONTEXTMENU: {
@@ -607,19 +671,18 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 nm->idFrom == kIdCommitList) {
                 auto* di = reinterpret_cast<NMLVDISPINFOW*>(lParam);
                 int row = di->item.iItem;
+                RequestCommitsNear(d, row);
                 if (row >= 0 &&
                     static_cast<size_t>(row) < d->commitCount() &&
                     (di->item.mask & LVIF_TEXT)) {
-                    const Commit& c = d->params.commits[row];
-                    const std::wstring* text = nullptr;
+                    Commit c = d->params.loader->At(static_cast<size_t>(row));
                     switch (di->item.iSubItem) {
-                        case 0: text = &c.subject; break;
-                        case 1: text = &c.author;  break;
-                        case 2: text = &c.date;    break;
+                        case 0: d->dispText = std::move(c.subject); break;
+                        case 1: d->dispText = std::move(c.author);  break;
+                        case 2: d->dispText = std::move(c.date);    break;
+                        default: d->dispText.clear();              break;
                     }
-                    if (text) {
-                        di->item.pszText = const_cast<LPWSTR>(text->c_str());
-                    }
+                    di->item.pszText = d->dispText.data();
                 }
                 return FALSE;
             }
@@ -660,7 +723,13 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return FALSE;
         }
         case WM_COMMAND:
-            if (HandleFileMenuCommand(hwnd, wParam)) return TRUE;
+            if (HandleFileMenuCommand(hwnd, wParam)) {
+                if (LOWORD(wParam) == kCmdOptions && d && d->params.loader) {
+                    d->params.loader->SetUnloadFar(
+                        ConfigGetBool(kUnloadFarCommitsKey, false));
+                }
+                return TRUE;
+            }
             if (LOWORD(wParam) == kCmdDebugOutput && d) {
                 const bool on = !DebugOutputEnabled();
                 SetDebugOutput(on);
@@ -683,6 +752,7 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SetTranscriptTarget(nullptr, 0);
             if (d) {
                 KillTimer(hwnd, kLoadTimerId);
+                d->params.loader.reset();
                 {
                     std::lock_guard<std::mutex> lock(d->mu);
                     d->stop = true;
@@ -694,8 +764,7 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 MSG pending;
                 while (PeekMessageW(&pending, hwnd, WM_GITTOOLS_DETAIL,
                                     WM_GITTOOLS_DETAIL, PM_REMOVE)) {
-                    delete reinterpret_cast<std::vector<FileChange>*>(
-                        pending.lParam);
+                    delete reinterpret_cast<CommitDetails*>(pending.lParam);
                 }
             }
             return FALSE;
@@ -706,13 +775,14 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 int ShowLogWindow(const RepoContext& repo, std::wstring query,
                   std::vector<std::wstring> logArgs,
-                  std::vector<Commit> commits) {
+                  CommitListResult log) {
     LogWindowParams p;
     p.query    = std::move(query);
     p.repoRoot = repo.root;
+    p.workTree = repo.workTree;
     p.cwd      = repo.cwd;
     p.logArgs  = std::move(logArgs);
-    p.commits  = std::move(commits);
+    p.loader   = std::move(log.loader);
     return ShowLogWindow(std::move(p));
 }
 

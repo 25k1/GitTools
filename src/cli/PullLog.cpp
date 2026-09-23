@@ -17,11 +17,12 @@ int RunPullLogInChild(const std::wstring& oldSha, const std::wstring& newSha) {
     RepoContext repo;
     if (!OpenRepoOrReport(L"gittools pull-log", repo)) return 1;
 
-    CommitListResult lr = LoadCommitRange(oldSha, newSha, repo.cwd);
-    if (!lr.errorMessage.empty() || lr.commits.empty()) return 0;
+    CommitListResult lr =
+        StartCommitLog(RangeLogArgs(oldSha, newSha), repo.cwd);
+    if (!lr.errorMessage.empty() || lr.count == 0) return 0;
 
     return ShowLogWindow(repo, L"", RangeLogArgs(oldSha, newSha),
-                         std::move(lr.commits));
+                         std::move(lr));
 }
 
 std::wstring HeadSha(const std::wstring& cwd) {

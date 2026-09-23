@@ -404,7 +404,7 @@ void OpenEditorAtCaret(DiffWindowData* d, HWND owner) {
     const std::wstring editor = FindEditor();
     const std::wstring full =
         loc.path.empty() ? std::wstring()
-                         : RepoFilePath(d->params->repoRoot, loc.path);
+                         : RepoFilePath(d->params->workTree, loc.path);
 
     if (editor.empty() || full.empty() || !PathExists(full)) {
         MessageBeep(MB_OK);

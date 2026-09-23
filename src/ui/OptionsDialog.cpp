@@ -14,11 +14,13 @@ namespace {
 constexpr int kIdEditorCommand = 4101;
 constexpr int kIdVolume        = 4102;
 constexpr int kIdVolumeValue   = 4103;
+constexpr int kIdUnloadFar     = 4104;
 
 struct OptionsDialogData {
     HWND hCommand     = nullptr;
     HWND hVolume      = nullptr;
     HWND hVolumeValue = nullptr;
+    HWND hUnloadFar   = nullptr;
 };
 
 int VolumePos(OptionsDialogData* d) {
@@ -62,6 +64,14 @@ void CreateControls(OptionsDialogData* d, HWND hwnd) {
     const int volH = 30;
     const int volY = btnY - gap - volH;
     const int valW = 40;
+    const int chkH = 20;
+
+    d->hUnloadFar = CreateChildControl(
+        hwnd, L"BUTTON",
+        L"&Unload commits far from view to save memory "
+        L"(reloaded from git when needed)",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 0, kIdUnloadFar,
+        margin, volY - gap - chkH, rc.right - 2 * margin, chkH);
 
     CreateChildControl(hwnd, L"STATIC", L"&Volume:", SS_LEFT, 0, -1,
                        margin, volY + 6, labelW, 18);
@@ -104,6 +114,10 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hwnd, UINT msg,
             SendMessageW(d->hVolume, TBM_SETPOS, TRUE, volume);
             UpdateVolumeLabel(d);
 
+            SendMessageW(d->hUnloadFar, BM_SETCHECK,
+                         ConfigGetBool(kUnloadFarCommitsKey, false)
+                             ? BST_CHECKED : BST_UNCHECKED, 0);
+
             SetFocus(d->hCommand);
             SendMessageW(d->hCommand, EM_SETSEL, 0, -1);
             return FALSE;
@@ -118,6 +132,9 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hwnd, UINT msg,
             if (LOWORD(wParam) == IDOK) {
                 ConfigSet(L"editor", ControlText(d->hCommand));
                 ConfigSet(L"soundvolume", std::to_wstring(VolumePos(d)));
+                ConfigSetBool(kUnloadFarCommitsKey,
+                              SendMessageW(d->hUnloadFar, BM_GETCHECK, 0, 0) ==
+                                  BST_CHECKED);
                 ResetEditorCache();
                 ResetSoundCache();
                 EndDialog(hwnd, 1);
@@ -132,7 +149,7 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hwnd, UINT msg,
 
 bool ShowOptionsDialog(HWND owner) {
     OptionsDialogData data;
-    return RunDialogEx(L"Options", 340, 130, owner, OptionsDlgProc,
+    return RunDialogEx(L"Options", 340, 150, owner, OptionsDlgProc,
                        &data, false) == 1;
 }
 
