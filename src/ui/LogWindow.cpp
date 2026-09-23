@@ -59,6 +59,8 @@ struct LogWindowData {
     std::wstring             dispText;
     std::wstring             detailSha;
     std::wstring             detailMessage;
+    long long                detailInsertions = 0;
+    long long                detailDeletions  = 0;
 
     HWND                     hwnd        = nullptr;
     std::thread              worker;
@@ -242,6 +244,22 @@ void ApplyCommitDetails(LogWindowData* d, CommitDetails&& details) {
     d->currentChanges = std::move(details.changes);
     ListView_SetItemCountEx(d->hChgList,
                             static_cast<int>(d->currentChanges.size()), 0);
+
+    d->detailInsertions = 0;
+    d->detailDeletions  = 0;
+    for (const FileChange& fc : d->currentChanges) {
+        if (fc.insertions > 0) d->detailInsertions += fc.insertions;
+        if (fc.deletions > 0)  d->detailDeletions  += fc.deletions;
+    }
+    const int row = d->selectedIndex();
+    if (row >= 0) ListView_RedrawItems(d->hCommitList, row, row);
+}
+
+std::wstring CommitTotal(LogWindowData* d, int row, const Commit& c,
+                         int column) {
+    if (c.fullSha != d->detailSha || row != d->selectedIndex()) return {};
+    return std::to_wstring(column == 3 ? d->detailInsertions
+                                       : d->detailDeletions);
 }
 
 std::wstring ChangeName(const FileChange& fc) {
@@ -440,9 +458,11 @@ void CreateChildren(LogWindowData* d, HWND hwnd) {
     EnableSelectAll(d->hMsgEdit);
 
     const Column commitCols[] = {
-        {L"Subject", 520},
-        {L"Author",  160},
-        {L"Date",    140},
+        {L"Subject",    520},
+        {L"Author",     160},
+        {L"Date",       140},
+        {L"Insertions",  80, LVCFMT_RIGHT},
+        {L"Deletions",   80, LVCFMT_RIGHT},
     };
     InsertColumns(d->hCommitList, commitCols);
     ListView_SetItemCountEx(d->hCommitList,
@@ -704,6 +724,11 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         case 0: d->dispText = std::move(c.subject); break;
                         case 1: d->dispText = std::move(c.author);  break;
                         case 2: d->dispText = std::move(c.date);    break;
+                        case 3:
+                        case 4:
+                            d->dispText = CommitTotal(d, row, c,
+                                                      di->item.iSubItem);
+                            break;
                         default: d->dispText.clear();              break;
                     }
                     di->item.pszText = d->dispText.data();
