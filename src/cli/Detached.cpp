@@ -1,7 +1,7 @@
 #include "cli/Detached.hpp"
 
 #include "cli/Util.hpp"
-#include "ui/DialogUtil.hpp"
+#include "ui/App.hpp"
 
 #include <string_view>
 

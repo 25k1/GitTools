@@ -1,95 +1,29 @@
-#include "ui/DiffWindow.hpp"
-
 #include "audio/Audio.hpp"
 #include "git/Config.hpp"
-#include "ui/DialogUtil.hpp"
-#include "ui/FindDialog.hpp"
 #include "ui/Shell.hpp"
 #include "util/Encoding.hpp"
 #include "util/Text.hpp"
 
-#include <windows.h>
-#include <commctrl.h>
+#include "ui/DiffWindow.hpp"
+
+#include "ui/App.hpp"
+#include "ui/FindDialog.hpp"
+#include "ui/Widgets.hpp"
+
+#include <wx/dialog.h>
+#include <wx/font.h>
+#include <wx/sizer.h>
+#include <wx/utils.h>
 
 #include <algorithm>
-#include <iterator>
 #include <vector>
 
 namespace git_tools {
 
 namespace {
 
-constexpr int kIdDiffEdit = 2001;
-
-struct DiffWindowData {
-    const DiffWindowParams* params   = nullptr;
-    HWND                    hEdit    = nullptr;
-    HFONT                   hMono    = nullptr;
-    int                     lastLine = -1;
-
-    std::wstring            text;
-    std::wstring            folded;
-    FindParams              find;
-
-    DiffWindowData() {
-        find.wrapAround = ConfigGetBool(kWrapAroundKey, false);
-    }
-};
-
-void PlayDiffSoundForLine(wchar_t firstChar) {
-    if (firstChar == L'+')      PlaySoundResource(L"diffLineInserted");
-    else if (firstChar == L'-') PlaySoundResource(L"diffLineDeleted");
-}
-
-void CheckCaretLineAndPlay(HWND edit, DiffWindowData* d) {
-    const int line = CaretLine(edit);
-    if (line == d->lastLine) return;
-    d->lastLine = line;
-
-    wchar_t buf[8] = {};
-    buf[0] = static_cast<wchar_t>(std::size(buf));
-    if (SendMessageW(edit, EM_GETLINE, line, reinterpret_cast<LPARAM>(buf)) >= 1) {
-        PlayDiffSoundForLine(buf[0]);
-    }
-}
-
-const std::wstring& FoldedText(DiffWindowData* d) {
-    if (d->folded.size() != d->text.size()) d->folded = ToLower(d->text);
-    return d->folded;
-}
-
-bool FindInDiff(DiffWindowData* d, bool forward) {
-    if (d->find.what.empty()) return false;
-
-    const bool          matchCase = d->find.matchCase;
-    const bool          wrap      = d->find.wrapAround;
-    const std::wstring& hay       = matchCase ? d->text : FoldedText(d);
-    const std::wstring  needle    =
-        matchCase ? d->find.what : ToLower(d->find.what);
-
-    size_t pos = std::wstring::npos;
-    if (needle.size() <= hay.size()) {
-        const auto [selStart, selEnd] = EditSelection(d->hEdit);
-        if (forward) {
-            pos = hay.find(needle, selEnd);
-            if (pos == std::wstring::npos && wrap) pos = hay.find(needle);
-        } else {
-            if (selStart > 0) pos = hay.rfind(needle, selStart - 1);
-            if (pos == std::wstring::npos && wrap) pos = hay.rfind(needle);
-        }
-    }
-
-    if (pos == std::wstring::npos) {
-        MessageBeep(MB_OK);
-        return false;
-    }
-
-    SendMessageW(d->hEdit, EM_SETSEL, static_cast<WPARAM>(pos),
-                 static_cast<LPARAM>(pos + needle.size()));
-    SendMessageW(d->hEdit, EM_SCROLLCARET, 0, 0);
-    d->lastLine = -1;
-    return true;
-}
+constexpr wchar_t kInsertedSound[] = L"diffLineInserted";
+constexpr wchar_t kDeletedSound[]  = L"diffLineDeleted";
 
 struct DiffLocation {
     std::wstring path;
@@ -172,9 +106,9 @@ bool IsDiffBodyLine(std::wstring_view line, bool includeRemoved) {
             (includeRemoved && line[0] == L'-'));
 }
 
-DiffLocation LocateInDiff(std::wstring_view text, int caretLine) {
+DiffLocation LocateInDiff(std::wstring_view text, long caretLine) {
     DiffLocation loc;
-    int  index   = 0;
+    long index   = 0;
     int  newLine = 0;
     bool inHunk  = false;
 
@@ -213,17 +147,145 @@ DiffLocation LocateInDiff(std::wstring_view text, int caretLine) {
     return loc;
 }
 
-void OpenEditorAtCaret(DiffWindowData* d, HWND owner) {
-    if (!d->params) return;
+bool IsCaretMoveKey(int key) {
+    switch (key) {
+        case WXK_UP: case WXK_DOWN: case WXK_LEFT: case WXK_RIGHT:
+        case WXK_HOME: case WXK_END: case WXK_PAGEUP: case WXK_PAGEDOWN:
+            return true;
+        default:
+            return false;
+    }
+}
 
-    const DiffLocation loc    = LocateInDiff(d->text, CaretLine(d->hEdit));
+class DiffDialog : public wxDialog {
+public:
+    DiffDialog(wxWindow* owner, const DiffWindowParams& params);
+
+private:
+    long CaretLine() const;
+    void CheckCaretLineAndPlay();
+    const std::wstring& FoldedText();
+    bool FindInDiff(bool forward);
+    void OpenFindDialog();
+    void OpenEditorAtCaret();
+    void OnKeyDown(wxKeyEvent& event);
+
+    const DiffWindowParams& params_;
+    wxTextCtrl*             edit_     = nullptr;
+    long                    lastLine_ = -1;
+    std::wstring            text_;
+    std::wstring            folded_;
+    FindParams              find_;
+};
+
+DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
+    : wxDialog(owner, wxID_ANY, params.title, wxDefaultPosition, wxDefaultSize,
+               wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMINIMIZE_BOX |
+                   wxMAXIMIZE_BOX),
+      params_(params) {
+    find_.wrapAround = ConfigGetBool(kWrapAroundKey, false);
+    PrepareSounds({kInsertedSound, kDeletedSound});
+
+    edit_ = CreateReadOnlyText(this, wxTE_DONTWRAP | wxHSCROLL | wxTE_PROCESS_TAB);
+    edit_->SetFont(wxFont(wxFontInfo(10.5).Family(wxFONTFAMILY_TELETYPE)
+                              .FaceName(L"Consolas")));
+    text_ = NormalizeCRLF(params_.diffText);
+    SetReadOnlyText(edit_, text_);
+
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    sizer->Add(edit_, 1, wxEXPAND);
+    SetSizer(sizer);
+    SetSize(FromDIP(wxSize(1030, 780)));
+    CentreOnParent();
+
+    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
+        if (event.GetKeyCode() == WXK_ESCAPE &&
+            event.GetModifiers() == wxMOD_NONE) {
+            EndModal(wxID_CANCEL);
+            return;
+        }
+        event.Skip();
+    });
+    edit_->Bind(wxEVT_KEY_DOWN, &DiffDialog::OnKeyDown, this);
+    edit_->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& event) {
+        event.Skip();
+        CallAfter([this] { CheckCaretLineAndPlay(); });
+    });
+    edit_->SetFocus();
+}
+
+long DiffDialog::CaretLine() const {
+    long column = 0;
+    long line   = 0;
+    return edit_->PositionToXY(edit_->GetInsertionPoint(), &column, &line)
+               ? line
+               : -1;
+}
+
+void DiffDialog::CheckCaretLineAndPlay() {
+    const long line = CaretLine();
+    if (line < 0 || line == lastLine_) return;
+    lastLine_ = line;
+
+    const long start = edit_->XYToPosition(0, line);
+    if (start < 0 || static_cast<size_t>(start) >= text_.size()) return;
+    if (text_[static_cast<size_t>(start)] == L'+') {
+        PlaySoundResource(kInsertedSound);
+    } else if (text_[static_cast<size_t>(start)] == L'-') {
+        PlaySoundResource(kDeletedSound);
+    }
+}
+
+const std::wstring& DiffDialog::FoldedText() {
+    if (folded_.size() != text_.size()) folded_ = ToLower(text_);
+    return folded_;
+}
+
+bool DiffDialog::FindInDiff(bool forward) {
+    if (find_.what.empty()) return false;
+
+    const bool          matchCase = find_.matchCase;
+    const bool          wrap      = find_.wrapAround;
+    const std::wstring& hay       = matchCase ? text_ : FoldedText();
+    const std::wstring  needle    = matchCase ? find_.what : ToLower(find_.what);
+
+    size_t pos = std::wstring::npos;
+    if (needle.size() <= hay.size()) {
+        long selStart = 0;
+        long selEnd   = 0;
+        edit_->GetSelection(&selStart, &selEnd);
+        if (forward) {
+            pos = hay.find(needle, static_cast<size_t>(selEnd));
+            if (pos == std::wstring::npos && wrap) pos = hay.find(needle);
+        } else {
+            if (selStart > 0) pos = hay.rfind(needle, static_cast<size_t>(selStart - 1));
+            if (pos == std::wstring::npos && wrap) pos = hay.rfind(needle);
+        }
+    }
+
+    if (pos == std::wstring::npos) {
+        wxBell();
+        return false;
+    }
+
+    edit_->SetSelection(static_cast<long>(pos),
+                        static_cast<long>(pos + needle.size()));
+    lastLine_ = -1;
+    return true;
+}
+
+void DiffDialog::OpenFindDialog() {
+    if (ShowFindDialog(this, find_)) FindInDiff(true);
+}
+
+void DiffDialog::OpenEditorAtCaret() {
+    const DiffLocation loc    = LocateInDiff(text_, CaretLine());
     const std::wstring editor = FindEditor();
     const std::wstring full   =
-        loc.path.empty() ? std::wstring()
-                         : RepoFilePath(d->params->workTree, loc.path);
+        loc.path.empty() ? std::wstring() : RepoFilePath(params_.workTree, loc.path);
 
     if (editor.empty() || !PathExists(full)) {
-        MessageBeep(MB_OK);
+        wxBell();
         return;
     }
 
@@ -235,140 +297,48 @@ void OpenEditorAtCaret(DiffWindowData* d, HWND owner) {
                    : MatchLineInFile(SplitLines(body), loc.content, loc.line);
     }
 
-    if (!OpenWithEditor(owner, editor, full, line)) {
-        ShowCouldNotOpen(owner, L"Edit file", full);
+    if (!OpenWithEditor(editor, full, line)) {
+        ShowCouldNotOpen(this, L"Edit file", full);
     }
 }
 
-void OpenFindDialog(DiffWindowData* d, HWND owner) {
-    if (ShowFindDialog(owner, d->find)) FindInDiff(d, true);
-}
+void DiffDialog::OnKeyDown(wxKeyEvent& event) {
+    const int  key       = event.GetKeyCode();
+    const int  modifiers = event.GetModifiers();
+    const bool ctrl      = (modifiers & ~wxMOD_SHIFT) == wxMOD_CONTROL;
+    const bool shift     = (modifiers & wxMOD_SHIFT) != 0;
 
-bool IsCaretMove(UINT msg, WPARAM wParam) {
-    if (msg == WM_LBUTTONUP) return true;
-    if (msg != WM_KEYDOWN) return false;
-    switch (wParam) {
-        case VK_UP: case VK_DOWN: case VK_LEFT: case VK_RIGHT:
-        case VK_HOME: case VK_END: case VK_PRIOR: case VK_NEXT:
-            return true;
-        default:
-            return false;
+    if (key == WXK_TAB) return;
+    if (ctrl && !shift && key == 'A') {
+        edit_->SelectAll();
+        return;
     }
-}
-
-LRESULT CALLBACK DiffEditSubclassProc(
-    HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
-    UINT_PTR, DWORD_PTR dwRefData) {
-    auto* d = reinterpret_cast<DiffWindowData*>(dwRefData);
-
-    switch (msg) {
-        case WM_GETDLGCODE:
-            return (DefSubclassProc(hwnd, msg, wParam, lParam) &
-                    ~DLGC_HASSETSEL) | DLGC_WANTTAB;
-        case WM_KEYDOWN: {
-            if (wParam == VK_TAB) return 0;
-            if (!d) break;
-
-            const bool ctrl  = CtrlPressed();
-            const bool shift = KeyDown(VK_SHIFT);
-            HWND       owner = GetParent(hwnd);
-
-            if (ctrl && wParam == 'A') {
-                SendMessageW(hwnd, EM_SETSEL, 0, -1);
-                return 0;
-            }
-            if (ctrl && shift && wParam == 'E') {
-                OpenEditorAtCaret(d, owner);
-                return 0;
-            }
-            if (ctrl && wParam == 'F') {
-                OpenFindDialog(d, owner);
-                return 0;
-            }
-            if (wParam == VK_F3) {
-                if (d->find.what.empty()) OpenFindDialog(d, owner);
-                else                      FindInDiff(d, !shift);
-                return 0;
-            }
-            break;
-        }
-        case WM_CHAR:
-            if (wParam == L'\t' || wParam == 0x01 ||
-                wParam == 0x05 || wParam == 0x06) {
-                return 0;
-            }
-            break;
+    if (ctrl && shift && key == 'E') {
+        OpenEditorAtCaret();
+        return;
+    }
+    if (ctrl && !shift && key == 'F') {
+        OpenFindDialog();
+        return;
+    }
+    if (key == WXK_F3 && (modifiers & ~wxMOD_SHIFT) == wxMOD_NONE) {
+        if (find_.what.empty()) OpenFindDialog();
+        else                    FindInDiff(!shift);
+        return;
     }
 
-    const LRESULT r = DefSubclassProc(hwnd, msg, wParam, lParam);
-    if (d && IsCaretMove(msg, wParam)) CheckCaretLineAndPlay(hwnd, d);
-    return r;
+    event.Skip();
+    if (IsCaretMoveKey(key)) CallAfter([this] { CheckCaretLineAndPlay(); });
 }
 
-INT_PTR CALLBACK DiffDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    auto* d = DialogState<DiffWindowData>(hwnd, msg, lParam);
+}
 
-    if (HandleDialogClose(hwnd, msg, wParam)) return TRUE;
-
-    switch (msg) {
-        case WM_INITDIALOG: {
-            d->hEdit = CreateReadOnlyEdit(
-                hwnd, kIdDiffEdit, WS_HSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN);
-            SendMessageW(d->hEdit, EM_SETLIMITTEXT,
-                         static_cast<WPARAM>(16 * 1024 * 1024), 0);
-
-            d->hMono = CreateFontW(
-                -14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
-            if (d->hMono) {
-                SendMessageW(d->hEdit, WM_SETFONT,
-                             reinterpret_cast<WPARAM>(d->hMono), TRUE);
-            }
-
-            if (d->params) {
-                d->text = NormalizeCRLF(d->params->diffText);
-                SetReadOnlyText(d->hEdit, d->text);
-            }
-            SetWindowSubclass(d->hEdit, DiffEditSubclassProc, 1,
-                              reinterpret_cast<DWORD_PTR>(d));
-
-            RECT rc;
-            GetClientRect(hwnd, &rc);
-            MoveWindow(d->hEdit, 0, 0, rc.right, rc.bottom, TRUE);
-            SetFocus(d->hEdit);
-            return FALSE;
-        }
-        case WM_SIZE:
-            if (d && d->hEdit) {
-                MoveWindow(d->hEdit, 0, 0, LOWORD(lParam), HIWORD(lParam), TRUE);
-            }
-            return FALSE;
-        case WM_COMMAND:
-            if (LOWORD(wParam) != IDOK) return FALSE;
-            EndDialog(hwnd, 0);
-            return TRUE;
-        case WM_DESTROY:
-            if (d && d->hEdit) {
-                RemoveWindowSubclass(d->hEdit, DiffEditSubclassProc, 1);
-            }
-            if (d && d->hMono) {
-                DeleteObject(d->hMono);
-                d->hMono = nullptr;
-            }
-            return FALSE;
+void ShowDiffWindow(wxWindow* owner, const DiffWindowParams& params) {
+    {
+        DiffDialog dialog(owner, params);
+        dialog.ShowModal();
     }
-    return FALSE;
-}
-
-}
-
-int ShowDiffWindow(HWND owner, const DiffWindowParams& params) {
-    DiffWindowData data;
-    data.params = &params;
-    const int result = RunDialog(params.title, 600, 480, owner, DiffDlgProc, &data);
     CloseAudio();
-    return result;
 }
 
 }

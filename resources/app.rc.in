@@ -1,5 +1,7 @@
 #include <winres.h>
 
+wxICON_AAA ICON "wx/msw/std.ico"
+
 1 24 "@GITTOOLS_GENERATED_DIR@/app.manifest"
 
 diffLineInserted FLAC "@GITTOOLS_RESOURCE_DIR@/diffLineInserted.flac"

@@ -1,8 +1,8 @@
 #pragma once
 
-#include <windows.h>
-
 #include <string>
+
+class wxWindow;
 
 namespace git_tools {
 
@@ -12,6 +12,6 @@ struct DiffWindowParams {
     std::wstring workTree;
 };
 
-int ShowDiffWindow(HWND owner, const DiffWindowParams& params);
+void ShowDiffWindow(wxWindow* owner, const DiffWindowParams& params);
 
 }

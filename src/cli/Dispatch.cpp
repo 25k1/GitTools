@@ -8,6 +8,7 @@
 #include "cli/PullLog.hpp"
 #include "cli/Util.hpp"
 #include "git/Git.hpp"
+#include "ui/App.hpp"
 
 #include <algorithm>
 #include <iterator>
@@ -30,8 +31,10 @@ int RunTestGit(int, wchar_t**) {
             text += L"\nstderr:\n" + Utf8ToWide(r.stderrText);
         }
     }
-    MessageBoxW(nullptr, text.c_str(), L"gittools test-git",
-                MB_OK | MB_ICONINFORMATION);
+    RunGui([&] {
+        ShowInfo(nullptr, L"gittools test-git", text);
+        return 0;
+    });
     return r.ok() ? 0 : 1;
 }
 
@@ -52,8 +55,10 @@ int RunUsage() {
         L"  gittools install-alias         add `git pl` / `git lg` / `git br` to ~/.gitconfig\n"
         L"  gittools uninstall-alias       remove those aliases\n"
         L"  gittools --version, -v         print the version\n";
-    MessageBoxW(nullptr, usage, L"gittools", MB_OK | MB_ICONINFORMATION);
-    return 0;
+    return RunGui([usage] {
+        ShowInfo(nullptr, L"gittools", usage);
+        return 0;
+    });
 }
 
 enum class Console {

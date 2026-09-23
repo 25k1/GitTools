@@ -24,11 +24,16 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <condition_variable>
 #include <cwchar>
+#include <deque>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <mutex>
 #include <string_view>
+#include <thread>
+#include <utility>
 
 namespace git_tools {
 
@@ -87,18 +92,21 @@ std::vector<float> Decode(std::string_view flac, ma_uint32 channels,
 
 class Player {
 public:
-    void Play(const wchar_t* name, float volume) {
-        if (!Open()) return;
-        auto [clip, inserted] = clips_.try_emplace(name);
-        if (inserted) {
-            clip->second = Decode(ResourceBytes(name), device_.playback.channels,
-                                  device_.sampleRate);
-        }
-        if (clip->second.empty()) return;
+    void Prepare(const std::wstring& device,
+                 const std::vector<std::wstring>& names) {
+        if (!Open(device)) return;
+        for (const std::wstring& name : names) Clip(name);
+    }
+
+    void Play(const std::wstring& device, const std::wstring& name,
+              float volume) {
+        if (!Open(device)) return;
+        const std::vector<float>& clip = Clip(name);
+        if (clip.empty()) return;
 
         ma_device_set_master_volume(&device_, volume);
         std::lock_guard lock(mu_);
-        current_ = &clip->second;
+        current_ = &clip;
         cursor_  = 0;
     }
 
@@ -115,12 +123,20 @@ public:
     }
 
 private:
-    bool Open() {
+    const std::vector<float>& Clip(const std::wstring& name) {
+        auto [clip, inserted] = clips_.try_emplace(name);
+        if (inserted) {
+            clip->second = Decode(ResourceBytes(name.c_str()),
+                                  device_.playback.channels, device_.sampleRate);
+        }
+        return clip->second;
+    }
+
+    bool Open(const std::wstring& wanted) {
         if (open_ || failed_) return open_;
         failed_ = true;
         if (!InitContext(context_)) return false;
 
-        const std::wstring wanted = ConfigGet(kAudioDeviceKey);
         ma_device_id id{};
         bool found = false;
         if (!wanted.empty()) {
@@ -178,9 +194,47 @@ private:
     size_t                                     cursor_  = 0;
 };
 
-Player& ThePlayer() {
-    static Player player;
-    return player;
+class AudioThread {
+public:
+    template <typename F>
+    void Post(F&& task) {
+        {
+            std::lock_guard lock(mu_);
+            tasks_.emplace_back(std::forward<F>(task));
+            if (!started_) {
+                started_ = true;
+                std::thread(&AudioThread::Run, this).detach();
+            }
+        }
+        cv_.notify_one();
+    }
+
+    Player& player() { return player_; }
+
+private:
+    void Run() {
+        for (;;) {
+            std::function<void()> task;
+            {
+                std::unique_lock lock(mu_);
+                cv_.wait(lock, [this] { return !tasks_.empty(); });
+                task = std::move(tasks_.front());
+                tasks_.pop_front();
+            }
+            task();
+        }
+    }
+
+    std::mutex                        mu_;
+    std::condition_variable           cv_;
+    std::deque<std::function<void()>> tasks_;
+    bool                              started_ = false;
+    Player                            player_;
+};
+
+AudioThread& Audio() {
+    static AudioThread* audio = new AudioThread;
+    return *audio;
 }
 
 }
@@ -196,13 +250,26 @@ std::vector<AudioDevice> ListAudioDevices() {
     return devices;
 }
 
+void PrepareSounds(std::initializer_list<const wchar_t*> names) {
+    if (SoundVolumePercent() == 0) return;
+    std::wstring device = ConfigGet(kAudioDeviceKey);
+    std::vector<std::wstring> clips(names.begin(), names.end());
+    Audio().Post([device = std::move(device), clips = std::move(clips)] {
+        Audio().player().Prepare(device, clips);
+    });
+}
+
 void PlaySoundResource(const wchar_t* name) {
     const int volume = SoundVolumePercent();
-    if (volume > 0) ThePlayer().Play(name, static_cast<float>(volume) / 100.0f);
+    if (volume <= 0) return;
+    Audio().Post([device = ConfigGet(kAudioDeviceKey), clip = std::wstring(name),
+                  gain = static_cast<float>(volume) / 100.0f] {
+        Audio().player().Play(device, clip, gain);
+    });
 }
 
 void CloseAudio() {
-    ThePlayer().Close();
+    Audio().Post([] { Audio().player().Close(); });
 }
 
 }

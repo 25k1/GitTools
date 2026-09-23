@@ -2,8 +2,6 @@
 
 #include "git/Git.hpp"
 
-#include <windows.h>
-
 #include <memory>
 #include <string>
 #include <vector>

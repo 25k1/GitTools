@@ -1,7 +1,5 @@
 #pragma once
 
-#include <windows.h>
-
 #include <string>
 
 namespace git_tools {
@@ -19,9 +17,9 @@ std::wstring FindEditor();
 
 void ResetEditorCache();
 
-bool RevealInExplorer(HWND owner, const std::wstring& path);
+bool RevealInExplorer(const std::wstring& path);
 
-bool OpenWithEditor(HWND owner, const std::wstring& editor,
-                    const std::wstring& path, int line = 0);
+bool OpenWithEditor(const std::wstring& editor, const std::wstring& path,
+                    int line = 0);
 
 }

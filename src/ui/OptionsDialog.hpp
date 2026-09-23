@@ -1,9 +1,9 @@
 #pragma once
 
-#include <windows.h>
+class wxWindow;
 
 namespace git_tools {
 
-bool ShowOptionsDialog(HWND owner);
+bool ShowOptionsDialog(wxWindow* owner);
 
 }

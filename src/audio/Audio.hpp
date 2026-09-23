@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,8 @@ struct AudioDevice {
 };
 
 std::vector<AudioDevice> ListAudioDevices();
+
+void PrepareSounds(std::initializer_list<const wchar_t*> names);
 
 void PlaySoundResource(const wchar_t* name);
 

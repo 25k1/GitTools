@@ -2,6 +2,7 @@
 
 #include "git/Process.hpp"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,7 @@ struct TranscriptChunk {
     bool         reset = false;
 };
 
-void SetTranscriptTarget(HWND hwnd, UINT message);
+void SetTranscriptListener(std::function<void()> listener);
 
 void NoteGitStart(const std::vector<std::wstring>& args);
 

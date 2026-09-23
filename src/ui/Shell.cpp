@@ -4,6 +4,7 @@
 #include "util/Encoding.hpp"
 #include "util/Text.hpp"
 
+#include <windows.h>
 #include <shellapi.h>
 
 #include <algorithm>
@@ -94,8 +95,8 @@ void AppendArg(std::wstring& args, const std::wstring& arg) {
     args += arg;
 }
 
-bool Launch(HWND owner, const std::wstring& file, const std::wstring& args) {
-    HINSTANCE rc = ShellExecuteW(owner, nullptr, file.c_str(), args.c_str(),
+bool Launch(const std::wstring& file, const std::wstring& args) {
+    HINSTANCE rc = ShellExecuteW(nullptr, nullptr, file.c_str(), args.c_str(),
                                  nullptr, SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(rc) > 32;
 }
@@ -182,12 +183,12 @@ std::wstring FindEditor() {
     return cache.path;
 }
 
-bool RevealInExplorer(HWND owner, const std::wstring& path) {
-    return Launch(owner, L"explorer.exe", L"/select," + Quoted(path));
+bool RevealInExplorer(const std::wstring& path) {
+    return Launch(L"explorer.exe", L"/select," + Quoted(path));
 }
 
-bool OpenWithEditor(HWND owner, const std::wstring& editor,
-                    const std::wstring& path, int line) {
+bool OpenWithEditor(const std::wstring& editor, const std::wstring& path,
+                    int line) {
     if (editor.empty()) return false;
 
     FindEditor();
@@ -204,7 +205,7 @@ bool OpenWithEditor(HWND owner, const std::wstring& editor,
     } else {
         AppendArg(args, Quoted(path));
     }
-    return Launch(owner, editor, args);
+    return Launch(editor, args);
 }
 
 }

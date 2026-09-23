@@ -13,12 +13,11 @@ constexpr size_t kMaxChars      = 200000;
 constexpr size_t kMaxEntryChars = 8000;
 
 struct TranscriptState {
-    std::mutex         mu;
-    std::wstring       text;
-    std::wstring       status;
-    unsigned long long total   = 0;
-    HWND               target  = nullptr;
-    UINT               message = 0;
+    std::mutex            mu;
+    std::wstring          text;
+    std::wstring          status;
+    unsigned long long    total = 0;
+    std::function<void()> listener;
 };
 
 TranscriptState& State() {
@@ -37,31 +36,24 @@ std::wstring CommandName(const std::vector<std::wstring>& args) {
 
 void Publish(const std::wstring& entry, const std::wstring& status) {
     TranscriptState& s = State();
-    HWND target  = nullptr;
-    UINT message = 0;
-    {
-        std::lock_guard lock(s.mu);
-        s.text  += entry;
-        s.total += entry.size();
-        if (s.text.size() > kMaxChars) {
-            const size_t cut = s.text.size() - kMaxChars;
-            const size_t nl  = s.text.find(L'\n', cut);
-            s.text.erase(0, nl == std::wstring::npos ? cut : nl + 1);
-        }
-        s.status = status;
-        target   = s.target;
-        message  = s.message;
+    std::lock_guard lock(s.mu);
+    s.text  += entry;
+    s.total += entry.size();
+    if (s.text.size() > kMaxChars) {
+        const size_t cut = s.text.size() - kMaxChars;
+        const size_t nl  = s.text.find(L'\n', cut);
+        s.text.erase(0, nl == std::wstring::npos ? cut : nl + 1);
     }
-    if (target && message) PostMessageW(target, message, 0, 0);
+    s.status = status;
+    if (s.listener) s.listener();
 }
 
 }
 
-void SetTranscriptTarget(HWND hwnd, UINT message) {
+void SetTranscriptListener(std::function<void()> listener) {
     TranscriptState& s = State();
     std::lock_guard lock(s.mu);
-    s.target  = hwnd;
-    s.message = message;
+    s.listener = std::move(listener);
 }
 
 void NoteGitStart(const std::vector<std::wstring>& args) {

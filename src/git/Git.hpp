@@ -7,6 +7,7 @@
 #include "util/Text.hpp"
 
 #include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -49,7 +50,7 @@ public:
     CommitLoader(const CommitLoader&)            = delete;
     CommitLoader& operator=(const CommitLoader&) = delete;
 
-    void Notify(HWND hwnd, UINT message);
+    void Notify(std::function<void()> onCommits);
     void Request(size_t count);
     void WaitFor(size_t count);
     size_t AcknowledgeCount();
@@ -85,8 +86,7 @@ private:
     bool                      finished_ = false;
     bool                      stop_     = false;
     bool                      posted_   = false;
-    HWND                      hwnd_     = nullptr;
-    UINT                      message_  = 0;
+    std::function<void()>     notify_;
     std::wstring              error_;
     std::wstring              cwd_;
     std::vector<std::wstring> restoreArgs_;

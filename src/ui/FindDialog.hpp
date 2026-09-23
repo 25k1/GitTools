@@ -1,8 +1,8 @@
 #pragma once
 
-#include <windows.h>
-
 #include <string>
+
+class wxWindow;
 
 namespace git_tools {
 
@@ -12,6 +12,6 @@ struct FindParams {
     bool         wrapAround = false;
 };
 
-bool ShowFindDialog(HWND owner, FindParams& params);
+bool ShowFindDialog(wxWindow* owner, FindParams& params);
 
 }

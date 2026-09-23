@@ -2,8 +2,6 @@
 
 #include "git/Types.hpp"
 
-#include <windows.h>
-
 #include <string>
 #include <vector>
 

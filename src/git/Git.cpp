@@ -219,18 +219,15 @@ CommitLoader::~CommitLoader() {
 }
 
 bool CommitLoader::ClaimPost() {
-    if (!hwnd_ || posted_ || store_.size() <= acked_) return false;
+    if (!notify_ || posted_ || store_.size() <= acked_) return false;
     posted_ = true;
     return true;
 }
 
-void CommitLoader::Notify(HWND hwnd, UINT message) {
-    const bool post = Locked([&] {
-        hwnd_    = hwnd;
-        message_ = message;
-        return ClaimPost();
-    });
-    if (post) PostMessageW(hwnd, message, 0, 0);
+void CommitLoader::Notify(std::function<void()> onCommits) {
+    std::lock_guard lock(mu_);
+    notify_ = std::move(onCommits);
+    if (ClaimPost()) notify_();
 }
 
 void CommitLoader::Request(size_t count) {
@@ -332,20 +329,14 @@ void CommitLoader::Consume(std::string_view bytes) {
 
 void CommitLoader::Publish(std::vector<std::string_view> records,
                            bool finished) {
-    HWND target  = nullptr;
-    UINT message = 0;
     {
         std::lock_guard lock(mu_);
         if (records.empty() && !finished) return;
         for (std::string_view record : records) store_.Append(record);
         finished_ = finished_ || finished;
-        if (ClaimPost()) {
-            target  = hwnd_;
-            message = message_;
-        }
+        if (ClaimPost()) notify_();
     }
     cv_.notify_all();
-    if (target) PostMessageW(target, message, 0, 0);
 }
 
 CommitListResult StartCommitLog(const std::vector<std::wstring>& logArgs,

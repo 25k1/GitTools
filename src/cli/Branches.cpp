@@ -2,8 +2,8 @@
 
 #include "cli/Detached.hpp"
 #include "git/Git.hpp"
+#include "ui/App.hpp"
 #include "ui/BranchWindow.hpp"
-#include "ui/DialogUtil.hpp"
 
 namespace git_tools {
 
@@ -33,7 +33,7 @@ int RunBranchInChild() {
 int RunBranch(int argc, wchar_t** argv) {
     return RunDetached(L"branch", argc, argv,
                        [](const std::vector<std::wstring>&) {
-                           return RunBranchInChild();
+                           return RunGui(RunBranchInChild);
                        });
 }
 
