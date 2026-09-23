@@ -1,0 +1,105 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ''
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $version = '${{ github.ref_name }}' -replace '^[vV]', ''
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $buildArgs = @('Release', 'clean')
+          if ($env:VERSION) { $buildArgs += "-DGITTOOLS_VERSION=$env:VERSION" }
+          & .\build.bat @buildArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check version stamp
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $exe = 'build-clang\gittools.exe'
+          $reported = (& $exe --version | Out-String).Trim()
+          $info = (Get-Item $exe).VersionInfo
+          Write-Host "gittools --version : $reported"
+          Write-Host "FileVersion        : $($info.FileVersion)"
+          Write-Host "ProductVersion     : $($info.ProductVersion)"
+          if ($env:VERSION) {
+            if ($reported -ne "gittools $env:VERSION") {
+              throw "--version printed '$reported', expected 'gittools $env:VERSION'"
+            }
+            if ($info.ProductVersion -ne $env:VERSION) {
+              throw "ProductVersion is '$($info.ProductVersion)', expected '$env:VERSION'"
+            }
+          }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build-clang/gittools.exe
+          archive: false
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: gittools.exe
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          asset=$(find dist -type f -name gittools.exe | head -n 1)
+          if [ -z "$asset" ]; then
+            echo "gittools.exe not found in the downloaded artifact" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$asset" --clobber
+          else
+            flags=()
+            case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+            gh release create "$TAG" "$asset" \
+              --verify-tag \
+              --title "gittools $VERSION" \
+              --generate-notes \
+              "${flags[@]}"
+          fi

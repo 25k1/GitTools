@@ -7,6 +7,41 @@ endif()
 
 enable_language(RC)
 
+set(GITTOOLS_VERSION "0.4" CACHE STRING "Version to stamp into the binary, e.g. 1.2.3 or v1.2.3-rc1")
+
+string(REGEX REPLACE "^[vV]" "" GITTOOLS_VERSION_STR "${GITTOOLS_VERSION}")
+string(REGEX MATCH "^[0-9]+(\\.[0-9]+)*" GITTOOLS_VERSION_NUMERIC
+       "${GITTOOLS_VERSION_STR}")
+if(NOT GITTOOLS_VERSION_NUMERIC)
+    message(FATAL_ERROR
+        "GITTOOLS_VERSION '${GITTOOLS_VERSION}' must look like 1.2.3 or v1.2.3")
+endif()
+string(REPLACE "." ";" GITTOOLS_VERSION_PARTS "${GITTOOLS_VERSION_NUMERIC}")
+list(LENGTH GITTOOLS_VERSION_PARTS GITTOOLS_VERSION_COUNT)
+if(GITTOOLS_VERSION_COUNT GREATER 4)
+    message(FATAL_ERROR
+        "GITTOOLS_VERSION '${GITTOOLS_VERSION}' has more than four numbers")
+endif()
+while(GITTOOLS_VERSION_COUNT LESS 4)
+    list(APPEND GITTOOLS_VERSION_PARTS 0)
+    math(EXPR GITTOOLS_VERSION_COUNT "${GITTOOLS_VERSION_COUNT} + 1")
+endwhile()
+foreach(part IN LISTS GITTOOLS_VERSION_PARTS)
+    if(part GREATER 65535)
+        message(FATAL_ERROR
+            "GITTOOLS_VERSION '${GITTOOLS_VERSION}': each number must be <= 65535")
+    endif()
+endforeach()
+list(JOIN GITTOOLS_VERSION_PARTS "," GITTOOLS_VERSION_FIELDS)
+list(JOIN GITTOOLS_VERSION_PARTS "." GITTOOLS_VERSION_FULL)
+message(STATUS "gittools: version ${GITTOOLS_VERSION_STR} (${GITTOOLS_VERSION_FULL})")
+
+set(GITTOOLS_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(GITTOOLS_RESOURCE_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+configure_file(src/Version.h.in       "${GITTOOLS_GENERATED_DIR}/Version.h"    @ONLY)
+configure_file(resources/app.manifest.in "${GITTOOLS_GENERATED_DIR}/app.manifest" @ONLY)
+configure_file(resources/app.rc.in    "${GITTOOLS_GENERATED_DIR}/app.rc"       @ONLY)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -111,10 +146,10 @@ add_executable(gittools
     src/ui/FindDialog.cpp
     src/ui/Shell.cpp
     src/ui/LogWindow.cpp
-    resources/app.rc
+    "${GITTOOLS_GENERATED_DIR}/app.rc"
 )
 
-target_include_directories(gittools PRIVATE src)
+target_include_directories(gittools PRIVATE src "${GITTOOLS_GENERATED_DIR}")
 
 target_link_libraries(gittools PRIVATE
     comctl32

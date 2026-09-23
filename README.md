@@ -24,9 +24,17 @@ For now build can be done only on windows. Requires  visual studio - *Tested on 
 build.bat
 ```
 
+To stamp a version into the binary (`--version` and the file properties):
+
+```
+build.bat Release clean -DGITTOOLS_VERSION=1.2.3
+```
+
 ## Install
 
-Drop the exe somewhere stable, then:
+Download `gittools.exe` from the
+[releases page](https://github.com/25k1/GitTools/releases/latest), or build it
+yourself as above. Put it somewhere stable, then:
 
 ```
 gittools install-alias

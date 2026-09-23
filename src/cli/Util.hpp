@@ -1,6 +1,7 @@
 #pragma once
 
 #include "git/Process.hpp"
+#include "ui/Encoding.hpp"
 
 #include <windows.h>
 
@@ -35,8 +36,15 @@ inline void WriteConsoleLine(HANDLE h, const std::wstring& s) {
     std::wstring line = s;
     line += L"\r\n";
     DWORD written = 0;
-    WriteConsoleW(h, line.data(),
-                  static_cast<DWORD>(line.size()), &written, nullptr);
+    DWORD mode    = 0;
+    if (GetConsoleMode(h, &mode)) {
+        WriteConsoleW(h, line.data(),
+                      static_cast<DWORD>(line.size()), &written, nullptr);
+    } else {
+        const std::string bytes = WideToUtf8(line);
+        WriteFile(h, bytes.data(), static_cast<DWORD>(bytes.size()),
+                  &written, nullptr);
+    }
 }
 
 }
