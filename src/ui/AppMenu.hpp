@@ -7,9 +7,9 @@
 
 namespace git_tools {
 
-constexpr int kCmdDebugOutput     = 6001;
-constexpr int kCmdExit            = 6002;
-constexpr int kCmdOptions         = 6003;
+inline constexpr int kCmdDebugOutput = 6001;
+inline constexpr int kCmdExit        = 6002;
+inline constexpr int kCmdOptions     = 6003;
 
 inline void AttachFileMenu(HWND hwnd) {
     HMENU file = CreatePopupMenu();
@@ -32,20 +32,19 @@ inline void AttachFileMenu(HWND hwnd) {
 }
 
 inline bool HandleFileMenuCommand(HWND hwnd, WPARAM wParam) {
-    if (LOWORD(wParam) == kCmdExit) {
-        EndDialog(hwnd, 0);
-        return true;
+    switch (LOWORD(wParam)) {
+        case kCmdExit:    EndDialog(hwnd, 0);       return true;
+        case kCmdOptions: ShowOptionsDialog(hwnd);  return true;
+        default:          return false;
     }
-    if (LOWORD(wParam) == kCmdOptions) {
-        ShowOptionsDialog(hwnd);
-        return true;
-    }
-    return false;
 }
 
-inline void CheckDebugMenu(HWND hwnd, bool on) {
+inline void ToggleDebugOutput(HWND hwnd, OutputPane& out, int editId) {
+    const bool on = !DebugOutputEnabled();
+    SetDebugOutput(on);
     CheckMenuItem(GetMenu(hwnd), kCmdDebugOutput,
                   MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED));
+    out.SetVisible(hwnd, editId, on);
 }
 
 }

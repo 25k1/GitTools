@@ -18,7 +18,11 @@ int SpawnDetachedSelf(const std::wstring& subcommand,
 
 bool OpenRepoOrReport(const wchar_t* title, RepoContext& repo);
 
-void ReportConsoleError(const std::wstring& msg);
-void ReportDialogError(const std::wstring& title, const std::wstring& msg);
+template <typename Child>
+int RunDetached(const wchar_t* subcommand, int argc, wchar_t** argv,
+                Child&& child) {
+    if (IsDetachedInvocation(argc, argv)) return child(ArgsFrom(argc, argv, 3));
+    return SpawnDetachedSelf(subcommand, ArgsFrom(argc, argv, 2));
+}
 
 }

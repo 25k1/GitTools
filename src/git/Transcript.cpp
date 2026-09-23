@@ -1,6 +1,7 @@
 #include "git/Transcript.hpp"
 
-#include "ui/Encoding.hpp"
+#include "util/Encoding.hpp"
+#include "util/Text.hpp"
 
 #include <mutex>
 
@@ -11,107 +12,75 @@ namespace {
 constexpr size_t kMaxChars      = 200000;
 constexpr size_t kMaxEntryChars = 8000;
 
-std::mutex& Mu() {
-    static std::mutex m;
-    return m;
+struct TranscriptState {
+    std::mutex         mu;
+    std::wstring       text;
+    std::wstring       status;
+    unsigned long long total   = 0;
+    HWND               target  = nullptr;
+    UINT               message = 0;
+};
+
+TranscriptState& State() {
+    static TranscriptState state;
+    return state;
 }
 
-std::wstring& Text() {
-    static std::wstring t;
-    return t;
-}
-
-std::wstring& Status() {
-    static std::wstring s;
-    return s;
-}
-
-unsigned long long gTotal   = 0;
-HWND               gTarget  = nullptr;
-UINT               gMessage = 0;
-
-void AppendNormalized(std::wstring& dst, const std::wstring& src) {
-    if (src.size() > kMaxEntryChars) {
-        for (size_t i = 0; i < kMaxEntryChars; ++i) {
-            wchar_t c = src[i];
-            if (c == L'\n') dst += L"\r\n";
-            else if (c != L'\r') dst += c;
-        }
-        dst += L"\r\n... (output truncated)\r\n";
-        return;
-    }
-    for (wchar_t c : src) {
-        if (c == L'\n') dst += L"\r\n";
-        else if (c != L'\r') dst += c;
-    }
-}
-
-std::wstring Command(const std::vector<std::wstring>& args, bool nameOnly) {
-    std::wstring out = L"git";
-    for (const auto& a : args) {
-        out += L' ';
-        out += a;
-        if (nameOnly) break;
-    }
-    return out;
+void AppendNormalized(std::wstring& dst, std::wstring_view src) {
+    dst += NormalizeCRLF(src.substr(0, kMaxEntryChars));
+    if (src.size() > kMaxEntryChars) dst += L"\r\n... (output truncated)\r\n";
 }
 
 std::wstring CommandName(const std::vector<std::wstring>& args) {
-    return Command(args, true);
-}
-
-std::wstring FullCommand(const std::vector<std::wstring>& args) {
-    return Command(args, false);
+    return args.empty() ? std::wstring(L"git") : L"git " + args.front();
 }
 
 void Publish(const std::wstring& entry, const std::wstring& status) {
+    TranscriptState& s = State();
     HWND target  = nullptr;
     UINT message = 0;
     {
-        std::lock_guard<std::mutex> lock(Mu());
-        Text()  += entry;
-        gTotal  += entry.size();
-        if (Text().size() > kMaxChars) {
-            size_t cut = Text().size() - kMaxChars;
-            size_t nl  = Text().find(L'\n', cut);
-            Text().erase(0, nl == std::wstring::npos ? cut : nl + 1);
+        std::lock_guard lock(s.mu);
+        s.text  += entry;
+        s.total += entry.size();
+        if (s.text.size() > kMaxChars) {
+            const size_t cut = s.text.size() - kMaxChars;
+            const size_t nl  = s.text.find(L'\n', cut);
+            s.text.erase(0, nl == std::wstring::npos ? cut : nl + 1);
         }
-        Status() = status;
-        target   = gTarget;
-        message  = gMessage;
+        s.status = status;
+        target   = s.target;
+        message  = s.message;
     }
     if (target && message) PostMessageW(target, message, 0, 0);
 }
+
 }
 
 void SetTranscriptTarget(HWND hwnd, UINT message) {
-    std::lock_guard<std::mutex> lock(Mu());
-    gTarget  = hwnd;
-    gMessage = message;
+    TranscriptState& s = State();
+    std::lock_guard lock(s.mu);
+    s.target  = hwnd;
+    s.message = message;
 }
 
 void NoteGitStart(const std::vector<std::wstring>& args) {
-    Publish(L"> " + FullCommand(args) + L"\r\n",
+    Publish(L"> git " + Join(args, L" ") + L"\r\n",
             CommandName(args) + L" - running");
 }
 
 void RecordGitRun(const std::vector<std::wstring>& args,
                   const ProcessResult& result) {
     std::wstring entry;
-    std::wstring status = CommandName(args);
-
-    if (!result.started) {
-        AppendNormalized(entry, result.errorMessage);
-        status += L" - failed";
-    } else {
+    if (result.started) {
         AppendNormalized(entry, Utf8ToWide(result.stdoutText));
         AppendNormalized(entry, Utf8ToWide(result.stderrText));
-        status += (result.exitCode == 0) ? L" - success" : L" - failed";
+    } else {
+        AppendNormalized(entry, result.errorMessage);
     }
-    if (entry.size() < 2 || entry.compare(entry.size() - 2, 2, L"\r\n") != 0) {
-        entry += L"\r\n";
-    }
-    Publish(entry, status);
+    if (!entry.ends_with(L"\r\n")) entry += L"\r\n";
+    Publish(entry, CommandName(args) +
+                       (result.ok() ? L" - success" : L" - failed"));
 }
 
 void RecordGitCancelled(const std::vector<std::wstring>& args) {
@@ -119,21 +88,24 @@ void RecordGitCancelled(const std::vector<std::wstring>& args) {
 }
 
 TranscriptChunk TranscriptSince(unsigned long long& cursor) {
-    std::lock_guard<std::mutex> lock(Mu());
+    TranscriptState& s = State();
+    std::lock_guard lock(s.mu);
     TranscriptChunk chunk;
-    const unsigned long long base = gTotal - Text().size();
+    const unsigned long long base = s.total - s.text.size();
     if (cursor < base) {
         chunk.reset = true;
-        chunk.text  = Text();
+        chunk.text  = s.text;
     } else {
-        chunk.text = Text().substr(static_cast<size_t>(cursor - base));
+        chunk.text = s.text.substr(static_cast<size_t>(cursor - base));
     }
-    cursor = gTotal;
+    cursor = s.total;
     return chunk;
 }
 
 std::wstring TranscriptStatus() {
-    std::lock_guard<std::mutex> lock(Mu());
-    return Status();
+    TranscriptState& s = State();
+    std::lock_guard lock(s.mu);
+    return s.status;
 }
+
 }

@@ -10,17 +10,6 @@ namespace git_tools {
 
 namespace {
 
-std::wstring BuildCommandLine(const std::wstring& executable,
-                              const std::vector<std::wstring>& args) {
-    std::wstring cmd;
-    AppendQuotedArg(cmd, executable);
-    for (const auto& a : args) {
-        cmd += L' ';
-        AppendQuotedArg(cmd, a);
-    }
-    return cmd;
-}
-
 struct PipePair {
     HANDLE readEnd  = nullptr;
     HANDLE writeEnd = nullptr;

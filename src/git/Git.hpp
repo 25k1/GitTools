@@ -3,7 +3,8 @@
 #include "git/CommitStore.hpp"
 #include "git/Process.hpp"
 #include "git/Types.hpp"
-#include "ui/Encoding.hpp"
+#include "util/Encoding.hpp"
+#include "util/Text.hpp"
 
 #include <condition_variable>
 #include <memory>
@@ -23,8 +24,7 @@ ProcessResult RunGit(const std::vector<std::wstring>& args,
                      const std::string* input = nullptr);
 
 inline std::wstring TrimmedOutput(const ProcessResult& r) {
-    if (!r.started || r.exitCode != 0) return {};
-    return Utf8ToWide(RStrip(r.stdoutText));
+    return r.ok() ? Utf8ToWide(TrimRight(r.stdoutText)) : std::wstring();
 }
 
 struct RepoContext {
@@ -67,23 +67,30 @@ private:
     void Restore(size_t i);
     void Consume(std::string_view bytes);
     void Publish(std::vector<std::string_view> records, bool finished);
+    bool ClaimPost();
 
-    std::mutex              mu_;
-    std::condition_variable cv_;
-    ProcessCanceller        canceller_;
-    std::string             pending_;
-    CommitStore             store_;
-    size_t                  acked_    = 0;
-    size_t                  wanted_   = kCommitPage;
-    bool                    finished_ = false;
-    bool                    stop_     = false;
-    bool                    posted_   = false;
-    HWND                    hwnd_     = nullptr;
-    UINT                    message_  = 0;
-    std::wstring            error_;
-    std::wstring            cwd_;
+    template <typename F>
+    auto Locked(F&& f) {
+        std::lock_guard lock(mu_);
+        return f();
+    }
+
+    std::mutex                mu_;
+    std::condition_variable   cv_;
+    ProcessCanceller          canceller_;
+    std::string               pending_;
+    CommitStore               store_;
+    size_t                    acked_    = 0;
+    size_t                    wanted_   = kCommitPage;
+    bool                      finished_ = false;
+    bool                      stop_     = false;
+    bool                      posted_   = false;
+    HWND                      hwnd_     = nullptr;
+    UINT                      message_  = 0;
+    std::wstring              error_;
+    std::wstring              cwd_;
     std::vector<std::wstring> restoreArgs_;
-    std::thread             worker_;
+    std::thread               worker_;
 };
 
 struct CommitListResult {

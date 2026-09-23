@@ -2,52 +2,44 @@
 
 #include "cli/Detached.hpp"
 #include "git/Git.hpp"
+#include "ui/DialogUtil.hpp"
 #include "ui/LogWindow.hpp"
-
-#include <windows.h>
-
-#include <string>
-#include <vector>
 
 namespace git_tools {
 
-namespace {
-
-constexpr wchar_t kTitle[] = L"gittools log";
-
-std::wstring JoinArgs(const std::vector<std::wstring>& args) {
-    std::wstring out;
-    for (size_t i = 0; i < args.size(); ++i) {
-        if (i) out += L" ";
-        out += args[i];
-    }
-    return out;
-}
-
-int RunLogInChild(const std::vector<std::wstring>& logArgs) {
+int OpenLogWindow(const wchar_t* title, std::wstring query,
+                  std::vector<std::wstring> logArgs, LogErrors errors) {
     RepoContext repo;
-    if (!OpenRepoOrReport(kTitle, repo)) return 1;
+    if (!OpenRepoOrReport(title, repo)) return 1;
 
     CommitListResult lr = StartCommitLog(logArgs, repo.cwd);
     if (!lr.errorMessage.empty()) {
-        ReportDialogError(kTitle, lr.errorMessage);
+        if (errors == LogErrors::Ignore) return 0;
+        ShowError(nullptr, title, lr.errorMessage);
         return 1;
     }
     if (lr.count == 0) return 0;
-
-    std::wstring query = L"log";
-    if (!logArgs.empty()) query += L" " + JoinArgs(logArgs);
-
-    return ShowLogWindow(repo, std::move(query), logArgs, std::move(lr));
-}
-
+    return ShowLogWindow(repo, std::move(query), std::move(logArgs),
+                         std::move(lr));
 }
 
 int RunLog(int argc, wchar_t** argv) {
-    if (IsDetachedInvocation(argc, argv)) {
-        return RunLogInChild(ArgsFrom(argc, argv, 3));
+    return RunDetached(L"log", argc, argv, [](std::vector<std::wstring> args) {
+        std::wstring query = L"log";
+        if (!args.empty()) query += L" " + Join(args, L" ");
+        return OpenLogWindow(L"gittools log", std::move(query), std::move(args),
+                             LogErrors::Report);
+    });
+}
+
+int RunLogRange(int argc, wchar_t** argv) {
+    constexpr wchar_t kTitle[] = L"gittools log-range";
+    if (argc < 4) {
+        ShowError(nullptr, kTitle, L"usage: gittools log-range OLD NEW");
+        return 1;
     }
-    return SpawnDetachedSelf(L"log", ArgsFrom(argc, argv, 2));
+    return OpenLogWindow(kTitle, std::wstring(argv[2]) + L".." + argv[3],
+                         RangeLogArgs(argv[2], argv[3]), LogErrors::Report);
 }
 
 }

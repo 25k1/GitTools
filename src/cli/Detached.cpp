@@ -1,10 +1,8 @@
 #include "cli/Detached.hpp"
 
 #include "cli/Util.hpp"
+#include "ui/DialogUtil.hpp"
 
-#include <windows.h>
-
-#include <iterator>
 #include <string_view>
 
 namespace git_tools {
@@ -14,51 +12,29 @@ bool IsDetachedInvocation(int argc, wchar_t** argv) {
 }
 
 std::vector<std::wstring> ArgsFrom(int argc, wchar_t** argv, int first) {
-    std::vector<std::wstring> out;
-    for (int i = first; i < argc; ++i) out.emplace_back(argv[i]);
-    return out;
-}
-
-void ReportConsoleError(const std::wstring& msg) {
-    WriteConsoleLine(GetStdHandle(STD_ERROR_HANDLE), msg);
-}
-
-void ReportDialogError(const std::wstring& title, const std::wstring& msg) {
-    MessageBoxW(nullptr, msg.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+    return first < argc ? std::vector<std::wstring>(argv + first, argv + argc)
+                        : std::vector<std::wstring>();
 }
 
 bool OpenRepoOrReport(const wchar_t* title, RepoContext& repo) {
     repo = OpenRepo();
-    if (repo.ok()) return true;
-    ReportDialogError(title, repo.errorMessage);
-    return false;
+    if (!repo.ok()) ShowError(nullptr, title, repo.errorMessage);
+    return repo.ok();
 }
 
 int SpawnDetachedSelf(const std::wstring& subcommand,
                       const std::vector<std::wstring>& args) {
-    wchar_t exePath[MAX_PATH * 4];
-    DWORD n = GetModuleFileNameW(
-        nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-    if (n == 0 || n >= std::size(exePath)) {
-        ReportConsoleError(L"Failed to resolve gittools.exe path.");
+    const std::wstring exe = ExecutablePath();
+    if (exe.empty()) {
+        WriteErr(L"Failed to resolve gittools.exe path.");
         return 1;
     }
 
-    std::wstring cmd;
-    AppendQuotedArg(cmd, exePath);
-    cmd += L' ';
-    cmd += subcommand;
-    cmd += L' ';
-    cmd += kDetachedFlag;
-    for (const auto& a : args) {
-        cmd += L' ';
-        AppendQuotedArg(cmd, a);
-    }
-
-    if (!SpawnDetachedProcess(CurrentDirectory(), cmd)) {
-        ReportConsoleError(
-            L"Failed to spawn detached gittools process (error " +
-            std::to_wstring(GetLastError()) + L").");
+    std::vector<std::wstring> full{subcommand, kDetachedFlag};
+    full.insert(full.end(), args.begin(), args.end());
+    if (!SpawnDetachedProcess(CurrentDirectory(), BuildCommandLine(exe, full))) {
+        WriteErr(L"Failed to spawn detached gittools process (error " +
+                 std::to_wstring(GetLastError()) + L").");
         return 1;
     }
     return 0;

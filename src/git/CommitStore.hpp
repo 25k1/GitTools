@@ -83,7 +83,8 @@ private:
     std::string_view PageText(size_t index) const;
     std::string_view Text(const Located& at) const;
     std::wstring     Hash(const Located& at) const;
-    std::wstring     Date(const Row& r, std::string_view text) const;
+    static std::string_view DateText(const Row& r, std::string_view text);
+    static std::string_view SubjectText(const Row& r, std::string_view text);
     uint32_t         Intern(std::string_view name, std::string_view email);
 
     std::vector<Page>                         pages_;

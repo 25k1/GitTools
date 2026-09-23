@@ -144,10 +144,10 @@ add_executable(gittools
     src/ui/BranchWindow.cpp
     src/ui/DiffWindow.cpp
     src/ui/OptionsDialog.cpp
-    src/ui/Encoding.cpp
     src/ui/FindDialog.cpp
     src/ui/Shell.cpp
     src/ui/LogWindow.cpp
+    src/util/Encoding.cpp
     "${GITTOOLS_GENERATED_DIR}/app.rc"
 )
 

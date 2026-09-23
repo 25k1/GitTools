@@ -7,5 +7,6 @@ namespace git_tools {
 
 std::wstring Utf8ToWide(std::string_view utf8);
 std::string  WideToUtf8(std::wstring_view wide);
+std::wstring ToLower(std::wstring s);
 
 }

@@ -2,51 +2,13 @@
 
 #include "cli/Util.hpp"
 #include "git/Git.hpp"
-#include "ui/Encoding.hpp"
 
-#include <iterator>
+#include <algorithm>
 #include <string>
 
 namespace git_tools {
 
 namespace {
-
-std::wstring NormalizedExePath() {
-    wchar_t buf[MAX_PATH * 4];
-    DWORD n = GetModuleFileNameW(
-        nullptr, buf, static_cast<DWORD>(std::size(buf)));
-    if (n == 0 || n >= std::size(buf)) return {};
-    std::wstring path(buf, n);
-    for (auto& c : path) if (c == L'\\') c = L'/';
-    return path;
-}
-
-void WriteOut(const std::wstring& s) {
-    WriteConsoleLine(GetStdHandle(STD_OUTPUT_HANDLE), s);
-}
-
-void WriteErr(const std::wstring& s) {
-    WriteConsoleLine(GetStdHandle(STD_ERROR_HANDLE), s);
-}
-
-bool SetAlias(const std::wstring& name, const std::wstring& value) {
-    ProcessResult r = RunGit(
-        {L"config", L"--global", L"alias." + name, value});
-    if (!r.started) {
-        WriteErr(L"Failed to launch git: " + r.errorMessage);
-        return false;
-    }
-    if (r.exitCode != 0) {
-        WriteErr(L"git config failed for alias." + name + L":\n" +
-                 Utf8ToWide(RStrip(r.stderrText)));
-        return false;
-    }
-    return true;
-}
-
-void UnsetAlias(const std::wstring& name) {
-    RunGit({L"config", L"--global", L"--unset", L"alias." + name});
-}
 
 struct AliasSpec {
     const wchar_t* name;
@@ -59,34 +21,37 @@ constexpr AliasSpec kAliases[] = {
     {L"br", L"branch"},
 };
 
+bool SetAlias(const std::wstring& name, const std::wstring& value) {
+    ProcessResult r = RunGit({L"config", L"--global", L"alias." + name, value});
+    if (r.ok()) return true;
+    WriteErr(r.started ? L"git config failed for alias." + name + L":\n" +
+                             Utf8ToWide(TrimRight(r.stderrText))
+                       : L"Failed to launch git: " + r.errorMessage);
+    return false;
+}
+
 }
 
 int RunInstallAlias() {
     SetConsoleOutputCP(CP_UTF8);
 
-    const std::wstring exe = NormalizedExePath();
+    std::wstring exe = ExecutablePath();
     if (exe.empty()) {
         WriteErr(L"Failed to resolve gittools.exe path.");
         return 1;
     }
+    std::ranges::replace(exe, L'\\', L'/');
 
     bool ok = true;
-    for (const auto& a : kAliases) {
-        std::wstring value = L"!\"";
-        value += exe;
-        value += L"\" ";
-        value += a.subcommand;
-        ok = SetAlias(a.name, value) && ok;
+    for (const AliasSpec& a : kAliases) {
+        ok = SetAlias(a.name, L"!\"" + exe + L"\" " + a.subcommand) && ok;
     }
     if (!ok) return 1;
 
     WriteOut(L"Installed git aliases (--global):");
-    for (const auto& a : kAliases) {
-        std::wstring line = L"  git ";
-        line += a.name;
-        line += L"  ->  gittools ";
-        line += a.subcommand;
-        WriteOut(line);
+    for (const AliasSpec& a : kAliases) {
+        WriteOut(std::wstring(L"  git ") + a.name + L"  ->  gittools " +
+                 a.subcommand);
     }
     WriteOut(L"");
     WriteOut(L"Remove with:  gittools uninstall-alias");
@@ -95,13 +60,11 @@ int RunInstallAlias() {
 
 int RunUninstallAlias() {
     SetConsoleOutputCP(CP_UTF8);
-    for (const auto& a : kAliases) UnsetAlias(a.name);
-    WriteOut(L"Removed git aliases (if present):");
-    for (const auto& a : kAliases) {
-        std::wstring line = L"  ";
-        line += a.name;
-        WriteOut(line);
+    for (const AliasSpec& a : kAliases) {
+        RunGit({L"config", L"--global", L"--unset", std::wstring(L"alias.") + a.name});
     }
+    WriteOut(L"Removed git aliases (if present):");
+    for (const AliasSpec& a : kAliases) WriteOut(std::wstring(L"  ") + a.name);
     return 0;
 }
 

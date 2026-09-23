@@ -1,6 +1,6 @@
 #include "git/CommitStore.hpp"
 
-#include "ui/Encoding.hpp"
+#include "util/Encoding.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -200,14 +200,13 @@ Commit CommitStore::At(size_t i) const {
     const std::string_view text   = Text(at);
     const std::string_view person = *people_[r.person];
     const size_t           sep    = person.find(kPersonSeparator);
-    const size_t           skip   =
-        (r.date == kTextDate) ? std::min<size_t>(r.dateLen, text.size()) : 0;
 
     c.shortSha    = c.fullSha.substr(0, r.abbrevLen);
     c.author      = Utf8ToWide(person.substr(0, sep));
     c.authorEmail = Utf8ToWide(person.substr(sep + 1));
-    c.date        = Date(r, text);
-    c.subject     = Utf8ToWide(text.substr(skip));
+    c.date        = r.date == kTextDate ? Utf8ToWide(DateText(r, text))
+                                        : FormatDate<std::wstring>(r.date);
+    c.subject     = Utf8ToWide(SubjectText(r, text));
     return c;
 }
 
@@ -219,11 +218,7 @@ bool CommitStore::Subject(size_t i, std::wstring& out) const {
     const Located at   = Locate(i);
     const Page&   page = pages_[at.page];
     if (at.slot >= page.rows.size()) return false;
-    const Row&             r    = page.rows[at.slot];
-    const std::string_view text = Text(at);
-    const size_t           skip =
-        (r.date == kTextDate) ? std::min<size_t>(r.dateLen, text.size()) : 0;
-    out = Utf8ToWide(text.substr(skip));
+    out = Utf8ToWide(SubjectText(page.rows[at.slot], Text(at)));
     return true;
 }
 
@@ -410,11 +405,13 @@ std::wstring CommitStore::Hash(const Located& at) const {
         pages_[at.page].hashes.data() + at.slot * hashLen_, hashLen_ * 2);
 }
 
-std::wstring CommitStore::Date(const Row& r, std::string_view text) const {
-    if (r.date == kTextDate) {
-        return Utf8ToWide(text.substr(0, std::min<size_t>(r.dateLen, text.size())));
-    }
-    return FormatDate<std::wstring>(r.date);
+std::string_view CommitStore::DateText(const Row& r, std::string_view text) {
+    const size_t len = r.date == kTextDate ? r.dateLen : 0;
+    return text.substr(0, std::min(len, text.size()));
+}
+
+std::string_view CommitStore::SubjectText(const Row& r, std::string_view text) {
+    return text.substr(DateText(r, text).size());
 }
 
 uint32_t CommitStore::Intern(std::string_view name, std::string_view email) {

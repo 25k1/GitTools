@@ -1,14 +1,23 @@
 #pragma once
 
+#include "util/Text.hpp"
+
 #include <windows.h>
 #include <commctrl.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace git_tools {
+
+inline constexpr UINT WM_GITTOOLS_TRANSCRIPT = WM_APP + 1;
+inline constexpr UINT WM_GITTOOLS_ACTIVATE   = WM_APP + 2;
+inline constexpr UINT WM_GITTOOLS_WINDOW     = WM_APP + 16;
 
 struct DlgTemplateBuilder {
     std::vector<uint8_t> buf;
@@ -19,9 +28,8 @@ struct DlgTemplateBuilder {
     }
     void PushStr(const wchar_t* s) {
         AlignWord();
-        size_t n = wcslen(s) + 1;
         const uint8_t* p = reinterpret_cast<const uint8_t*>(s);
-        buf.insert(buf.end(), p, p + n * sizeof(wchar_t));
+        buf.insert(buf.end(), p, p + (wcslen(s) + 1) * sizeof(wchar_t));
     }
 };
 
@@ -30,16 +38,12 @@ inline std::vector<uint8_t> BuildDialogTemplate(
     DlgTemplateBuilder b;
     DLGTEMPLATE t{};
     t.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE |
-              DS_SETFONT | DS_CENTER;
-    if (resizable) {
-        t.style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-    } else {
-        t.style |= DS_MODALFRAME;
-    }
+              DS_SETFONT | DS_CENTER |
+              (resizable ? WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+                         : DS_MODALFRAME);
     t.dwExtendedStyle = WS_EX_CONTROLPARENT;
-    t.cdit = 0;
-    t.x = 0; t.y = 0;
-    t.cx = cx; t.cy = cy;
+    t.cx = cx;
+    t.cy = cy;
     b.Push(t);
     b.Push(static_cast<WORD>(0));
     b.Push(static_cast<WORD>(0));
@@ -65,15 +69,9 @@ inline int RunDialog(const std::wstring& title, short cx, short cy,
 }
 
 template <typename T>
-T* DialogState(HWND hwnd) {
+T* DialogState(HWND hwnd, UINT msg, LPARAM lParam) {
+    if (msg == WM_INITDIALOG) SetWindowLongPtrW(hwnd, GWLP_USERDATA, lParam);
     return reinterpret_cast<T*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-}
-
-template <typename T>
-T* AttachDialogState(HWND hwnd, LPARAM lParam) {
-    auto* d = reinterpret_cast<T*>(lParam);
-    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(d));
-    return d;
 }
 
 inline void CenterOnActiveMonitor(HWND hwnd) {
@@ -130,6 +128,19 @@ inline void ShowError(HWND owner, const std::wstring& title,
     MessageBoxW(owner, text.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
 }
 
+inline void ShowCouldNotOpen(HWND owner, const std::wstring& title,
+                             const std::wstring& path) {
+    ShowError(owner, title, L"Could not open:\n\n" + path);
+}
+
+inline bool KeyDown(int vkey) {
+    return (GetKeyState(vkey) & 0x8000) != 0;
+}
+
+inline bool CtrlPressed() {
+    return KeyDown(VK_CONTROL) && !KeyDown(VK_MENU);
+}
+
 struct StackLayout {
     int x = 0;
     int y = 0;
@@ -160,38 +171,38 @@ inline int TrackMenu(HWND owner, POINT pt,
                     static_cast<UINT_PTR>(item.id), item.text);
     }
     SetForegroundWindow(owner);
-    int cmd = static_cast<int>(TrackPopupMenuEx(
+    const int cmd = static_cast<int>(TrackPopupMenuEx(
         menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
         pt.x, pt.y, owner, nullptr));
     DestroyMenu(menu);
     return cmd;
 }
 
-inline BOOL CALLBACK SetChildFontProc(HWND child, LPARAM font) {
-    SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(font), TRUE);
-    return TRUE;
-}
-
 inline void ApplyDialogFont(HWND dlg) {
     HFONT font = reinterpret_cast<HFONT>(SendMessageW(dlg, WM_GETFONT, 0, 0));
-    if (font) {
-        EnumChildWindows(dlg, SetChildFontProc,
-                         reinterpret_cast<LPARAM>(font));
-    }
+    if (!font) return;
+    EnumChildWindows(
+        dlg,
+        [](HWND child, LPARAM f) -> BOOL {
+            SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(f), TRUE);
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(font));
 }
 
 inline std::wstring ControlText(HWND control) {
-    int len = GetWindowTextLengthW(control);
+    const int len = GetWindowTextLengthW(control);
     if (len <= 0) return {};
     std::wstring s(static_cast<size_t>(len) + 1, L'\0');
-    int n = GetWindowTextW(control, s.data(), len + 1);
-    s.resize(n > 0 ? static_cast<size_t>(n) : 0);
+    s.resize(static_cast<size_t>(std::max(0, GetWindowTextW(control, s.data(),
+                                                            len + 1))));
     return s;
 }
 
 inline HWND CreateChildControl(HWND parent, const wchar_t* cls,
                                const wchar_t* text, DWORD style, DWORD exStyle,
-                               int id, int x, int y, int w, int h) {
+                               int id, int x = 0, int y = 0, int w = 0,
+                               int h = 0) {
     return CreateWindowExW(
         exStyle, cls, text, WS_CHILD | WS_VISIBLE | style,
         x, y, w, h, parent,
@@ -200,44 +211,60 @@ inline HWND CreateChildControl(HWND parent, const wchar_t* cls,
 }
 
 inline HWND CreateLabel(HWND parent, const wchar_t* text) {
-    return CreateWindowExW(
-        0, L"STATIC", text,
-        WS_CHILD | WS_VISIBLE | SS_LEFT,
-        0, 0, 0, 0, parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    return CreateChildControl(parent, L"STATIC", text, SS_LEFT, 0, 0);
 }
 
 inline HWND CreateStatusBar(HWND parent, int id) {
-    return CreateWindowExW(
-        0, STATUSCLASSNAMEW, L"",
-        WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
-        0, 0, 0, 0, parent,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-        GetModuleHandleW(nullptr), nullptr);
+    return CreateChildControl(parent, STATUSCLASSNAMEW, L"", SBARS_SIZEGRIP, 0,
+                              id);
 }
 
-inline int StatusBarHeight(HWND status) {
-    if (!status) return 0;
-    RECT rc{};
-    GetWindowRect(status, &rc);
-    return rc.bottom - rc.top;
-}
-
-inline void SetStatusText(HWND status, const std::wstring& text) {
-    if (status) {
-        SendMessageW(status, SB_SETTEXTW, 0,
-                     reinterpret_cast<LPARAM>(text.c_str()));
-    }
+inline HWND CreateReadOnlyEdit(HWND parent, int id, DWORD extraStyle) {
+    return CreateChildControl(
+        parent, L"EDIT", L"",
+        WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL |
+            ES_NOHIDESEL | extraStyle,
+        WS_EX_CLIENTEDGE, id);
 }
 
 inline HWND CreateOutputEdit(HWND parent, int id) {
-    return CreateWindowExW(
-        WS_EX_CLIENTEDGE, L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
-            ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL |
-            ES_NOHIDESEL,
-        0, 0, 0, 0, parent,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-        GetModuleHandleW(nullptr), nullptr);
+    return CreateReadOnlyEdit(parent, id,
+                              WS_TABSTOP | WS_HSCROLL | ES_AUTOHSCROLL);
+}
+
+inline constexpr int kButtonWidth  = 82;
+inline constexpr int kButtonHeight = 26;
+
+inline void CreateOkCancelButtons(HWND dlg, int margin, int gap) {
+    RECT rc;
+    GetClientRect(dlg, &rc);
+    const int y = rc.bottom - margin - kButtonHeight;
+    CreateChildControl(dlg, L"BUTTON", L"OK", WS_TABSTOP | BS_DEFPUSHBUTTON, 0,
+                       IDOK, rc.right - margin - 2 * kButtonWidth - gap, y,
+                       kButtonWidth, kButtonHeight);
+    CreateChildControl(dlg, L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, 0,
+                       IDCANCEL, rc.right - margin - kButtonWidth, y,
+                       kButtonWidth, kButtonHeight);
+}
+
+inline void SetChecked(HWND button, bool on) {
+    SendMessageW(button, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+inline bool IsChecked(HWND button) {
+    return SendMessageW(button, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+inline std::pair<DWORD, DWORD> EditSelection(HWND edit) {
+    DWORD start = 0, end = 0;
+    SendMessageW(edit, EM_GETSEL, reinterpret_cast<WPARAM>(&start),
+                 reinterpret_cast<LPARAM>(&end));
+    return {start, end};
+}
+
+inline int CaretLine(HWND edit) {
+    return static_cast<int>(
+        SendMessageW(edit, EM_LINEFROMCHAR, EditSelection(edit).first, 0));
 }
 
 inline LRESULT CALLBACK SelectAllEditProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -246,10 +273,8 @@ inline LRESULT CALLBACK SelectAllEditProc(HWND hwnd, UINT msg, WPARAM wParam,
         return DefSubclassProc(hwnd, msg, wParam, lParam) & ~DLGC_HASSETSEL;
     }
     if (msg == WM_SETFOCUS) {
-        LRESULT r = DefSubclassProc(hwnd, msg, wParam, lParam);
-        DWORD start = 0, end = 0;
-        SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&start),
-                     reinterpret_cast<LPARAM>(&end));
+        const LRESULT r = DefSubclassProc(hwnd, msg, wParam, lParam);
+        const auto [start, end] = EditSelection(hwnd);
         if (start == 0 && end != 0 &&
             end == static_cast<DWORD>(GetWindowTextLengthW(hwnd))) {
             SendMessageW(hwnd, EM_SETSEL, 0, 0);
@@ -259,9 +284,7 @@ inline LRESULT CALLBACK SelectAllEditProc(HWND hwnd, UINT msg, WPARAM wParam,
     }
     if (msg == WM_NCDESTROY) {
         RemoveWindowSubclass(hwnd, SelectAllEditProc, 1);
-    } else if (msg == WM_KEYDOWN && wParam == 'A' &&
-               (GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
-               (GetKeyState(VK_MENU) & 0x8000) == 0) {
+    } else if (msg == WM_KEYDOWN && wParam == 'A' && CtrlPressed()) {
         SendMessageW(hwnd, EM_SETSEL, 0, -1);
         return 0;
     } else if (msg == WM_CHAR && wParam == 1) {
@@ -277,14 +300,14 @@ inline void EnableSelectAll(HWND edit) {
 inline void SetOutputText(HWND edit, const std::wstring& text) {
     if (!edit) return;
     SetWindowTextW(edit, text.c_str());
-    int len = GetWindowTextLengthW(edit);
+    const int len = GetWindowTextLengthW(edit);
     SendMessageW(edit, EM_SETSEL, len, len);
     SendMessageW(edit, EM_SCROLLCARET, 0, 0);
 }
 
 inline void AppendOutputText(HWND edit, const std::wstring& text) {
     if (!edit || text.empty()) return;
-    int len = GetWindowTextLengthW(edit);
+    const int len = GetWindowTextLengthW(edit);
     SendMessageW(edit, EM_SETREADONLY, FALSE, 0);
     SendMessageW(edit, EM_SETSEL, len, len);
     SendMessageW(edit, EM_REPLACESEL, FALSE,
@@ -293,20 +316,23 @@ inline void AppendOutputText(HWND edit, const std::wstring& text) {
     SendMessageW(edit, EM_SCROLLCARET, 0, 0);
 }
 
-inline constexpr DWORD kListViewExStyle =
-    LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP;
+inline void SetReadOnlyText(HWND edit, const std::wstring& text) {
+    if (!edit) return;
+    SetWindowTextW(edit, NormalizeCRLF(text).c_str());
+    SendMessageW(edit, EM_SETSEL, 0, 0);
+    SendMessageW(edit, EM_LINESCROLL, 0, -0x7FFFFFFF);
+    SendMessageW(edit, EM_SCROLLCARET, 0, 0);
+}
 
 inline HWND CreateListView(HWND parent, int id,
                            DWORD extraStyle = 0, DWORD extraExStyle = 0) {
-    HWND h = CreateWindowExW(
-        0, WC_LISTVIEWW, L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-            LVS_REPORT | LVS_SHOWSELALWAYS | extraStyle,
-        0, 0, 0, 0, parent,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-        GetModuleHandleW(nullptr), nullptr);
+    HWND h = CreateChildControl(
+        parent, WC_LISTVIEWW, L"",
+        WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS | extraStyle, 0, id);
     if (h) {
-        ListView_SetExtendedListViewStyle(h, kListViewExStyle | extraExStyle);
+        ListView_SetExtendedListViewStyle(
+            h, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP |
+                   extraExStyle);
     }
     return h;
 }
@@ -317,102 +343,77 @@ struct Column {
     int            fmt = LVCFMT_LEFT;
 };
 
-template <size_t N>
-void InsertColumns(HWND hList, const Column (&cols)[N]) {
-    for (size_t i = 0; i < N; ++i) {
+inline void InsertColumns(HWND list, std::span<const Column> cols) {
+    for (size_t i = 0; i < cols.size(); ++i) {
         LVCOLUMNW c{};
         c.mask    = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
         c.pszText = const_cast<LPWSTR>(cols[i].name);
         c.cx      = cols[i].width;
         c.fmt     = cols[i].fmt;
-        ListView_InsertColumn(hList, static_cast<int>(i), &c);
+        ListView_InsertColumn(list, static_cast<int>(i), &c);
     }
 }
 
-inline int AppendRow(HWND hList, int row, const std::wstring& text) {
-    LVITEMW it{};
-    it.mask     = LVIF_TEXT;
-    it.iItem    = row;
-    it.iSubItem = 0;
-    it.pszText  = const_cast<LPWSTR>(text.c_str());
-    return ListView_InsertItem(hList, &it);
-}
-
-inline void SetRowText(HWND hList, int row, int col, const std::wstring& s) {
-    ListView_SetItemText(hList, row, col, const_cast<LPWSTR>(s.c_str()));
-}
-
-inline void AppendRowCells(HWND hList, int row,
+inline void AppendRowCells(HWND list, int row,
                            std::initializer_list<std::wstring> cells) {
     int col = 0;
-    int inserted = row;
     for (const std::wstring& cell : cells) {
-        if (col == 0) inserted = AppendRow(hList, row, cell);
-        else          SetRowText(hList, inserted, col, cell);
-        ++col;
+        LPWSTR text = const_cast<LPWSTR>(cell.c_str());
+        if (col++ == 0) {
+            LVITEMW it{};
+            it.mask    = LVIF_TEXT;
+            it.iItem   = row;
+            it.pszText = text;
+            row = ListView_InsertItem(list, &it);
+        } else {
+            ListView_SetItemText(list, row, col - 1, text);
+        }
     }
 }
 
-inline int SelectedRow(HWND hList) {
-    return static_cast<int>(SendMessageW(hList, LVM_GETNEXTITEM,
-                                         static_cast<WPARAM>(-1),
+inline void SetRowCount(HWND list, size_t count, DWORD flags = 0) {
+    ListView_SetItemCountEx(list, static_cast<int>(count), flags);
+}
+
+inline int NextSelectedRow(HWND list, int after) {
+    return static_cast<int>(SendMessageW(list, LVM_GETNEXTITEM,
+                                         static_cast<WPARAM>(after),
                                          LVNI_SELECTED));
 }
 
-inline void SelectRow(HWND hList, int row) {
-    ListView_SetItemState(hList, row,
-                          LVIS_FOCUSED | LVIS_SELECTED,
-                          LVIS_FOCUSED | LVIS_SELECTED);
+inline int SelectedRow(HWND list) {
+    return NextSelectedRow(list, -1);
 }
 
-inline void SelectAllRows(HWND hList) {
-    ListView_SetItemState(hList, -1, LVIS_SELECTED, LVIS_SELECTED);
-}
-
-inline std::vector<int> SelectedRows(HWND hList) {
+inline std::vector<int> SelectedRows(HWND list) {
     std::vector<int> rows;
-    int i = -1;
-    for (;;) {
-        i = static_cast<int>(SendMessageW(hList, LVM_GETNEXTITEM,
-                                          static_cast<WPARAM>(i),
-                                          LVNI_SELECTED));
-        if (i < 0) break;
+    for (int i = NextSelectedRow(list, -1); i >= 0; i = NextSelectedRow(list, i)) {
         rows.push_back(i);
     }
     return rows;
 }
 
-inline bool RowSelected(HWND hList, int row) {
-    return (ListView_GetItemState(hList, row, LVIS_SELECTED) &
-            LVIS_SELECTED) != 0;
+inline void SelectRow(HWND list, int row) {
+    ListView_SetItemState(list, row, LVIS_FOCUSED | LVIS_SELECTED,
+                          LVIS_FOCUSED | LVIS_SELECTED);
 }
 
-inline void SelectOnlyRow(HWND hList, int row) {
-    ListView_SetItemState(hList, -1, 0, LVIS_SELECTED);
-    SelectRow(hList, row);
+inline void SelectAllRows(HWND list) {
+    ListView_SetItemState(list, -1, LVIS_SELECTED, LVIS_SELECTED);
 }
 
-inline int SelectedIndexIn(HWND hList, size_t count) {
-    int i = SelectedRow(hList);
+inline bool RowSelected(HWND list, int row) {
+    return (ListView_GetItemState(list, row, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+}
+
+inline void SelectOnlyRow(HWND list, int row) {
+    ListView_SetItemState(list, -1, 0, LVIS_SELECTED);
+    SelectRow(list, row);
+}
+
+inline int SelectedIndexIn(HWND list, size_t count) {
+    const int i = SelectedRow(list);
     return (i >= 0 && static_cast<size_t>(i) < count) ? i : -1;
 }
 
-inline std::wstring NormalizeCRLF(const std::wstring& s) {
-    std::wstring out;
-    out.reserve(s.size() + s.size() / 32);
-    for (wchar_t c : s) {
-        if (c == L'\n') out += L"\r\n";
-        else if (c != L'\r') out += c;
-    }
-    return out;
-}
-
-inline void SetReadOnlyText(HWND hEdit, const std::wstring& text) {
-    if (!hEdit) return;
-    std::wstring normalized = NormalizeCRLF(text);
-    SetWindowTextW(hEdit, normalized.c_str());
-    SendMessageW(hEdit, EM_SETSEL, 0, 0);
-    SendMessageW(hEdit, EM_LINESCROLL, 0, -0x7FFFFFFF);
-    SendMessageW(hEdit, EM_SCROLLCARET, 0, 0);
-}
 }

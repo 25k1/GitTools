@@ -8,9 +8,9 @@
 #include "cli/PullLog.hpp"
 #include "cli/Util.hpp"
 #include "git/Git.hpp"
-#include "ui/Encoding.hpp"
-#include "ui/LogWindow.hpp"
 
+#include <algorithm>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -18,33 +18,26 @@ namespace git_tools {
 
 namespace {
 
-constexpr wchar_t kTitle[] = L"gittools";
-
-int RunTestGit() {
+int RunTestGit(int, wchar_t**) {
     ProcessResult r = RunGit({L"--version"});
     std::wstring text;
     if (!r.started) {
         text = L"Failed to launch git:\n\n" + r.errorMessage;
     } else {
-        text  = L"git --version (exit ";
-        text += std::to_wstring(r.exitCode);
-        text += L")\n\n";
-        text += L"stdout:\n";
-        text += Utf8ToWide(r.stdoutText);
+        text = L"git --version (exit " + std::to_wstring(r.exitCode) +
+               L")\n\nstdout:\n" + Utf8ToWide(r.stdoutText);
         if (!r.stderrText.empty()) {
-            text += L"\nstderr:\n";
-            text += Utf8ToWide(r.stderrText);
+            text += L"\nstderr:\n" + Utf8ToWide(r.stderrText);
         }
     }
     MessageBoxW(nullptr, text.c_str(), L"gittools test-git",
                 MB_OK | MB_ICONINFORMATION);
-    return (r.started && r.exitCode == 0) ? 0 : 1;
+    return r.ok() ? 0 : 1;
 }
 
-int RunVersion() {
+int RunVersion(int, wchar_t**) {
     SetConsoleOutputCP(CP_UTF8);
-    WriteConsoleLine(GetStdHandle(STD_OUTPUT_HANDLE),
-                     std::wstring(L"gittools ") + kVersion);
+    WriteOut(std::wstring(L"gittools ") + kVersion);
     return 0;
 }
 
@@ -59,61 +52,52 @@ int RunUsage() {
         L"  gittools install-alias         add `git pl` / `git lg` / `git br` to ~/.gitconfig\n"
         L"  gittools uninstall-alias       remove those aliases\n"
         L"  gittools --version, -v         print the version\n";
-    MessageBoxW(nullptr, usage, kTitle, MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(nullptr, usage, L"gittools", MB_OK | MB_ICONINFORMATION);
     return 0;
 }
 
-int RunLogRange(int argc, wchar_t** argv) {
-    constexpr wchar_t kRangeTitle[] = L"gittools log-range";
-    if (argc < 4) {
-        ReportDialogError(kRangeTitle, L"usage: gittools log-range OLD NEW");
-        return 1;
-    }
-    const std::wstring oldSha = argv[2];
-    const std::wstring newSha = argv[3];
+enum class Console {
+    Free,
+    Keep,
+    KeepUntilDetached,
+};
 
-    RepoContext repo;
-    if (!OpenRepoOrReport(kRangeTitle, repo)) return 1;
+struct Command {
+    std::wstring_view name;
+    int (*run)(int, wchar_t**);
+    Console console;
+};
 
-    CommitListResult lr =
-        StartCommitLog(RangeLogArgs(oldSha, newSha), repo.cwd);
-    if (!lr.errorMessage.empty()) {
-        ReportDialogError(kRangeTitle, lr.errorMessage);
-        return 1;
-    }
-
-    return ShowLogWindow(repo, oldSha + L".." + newSha,
-                         RangeLogArgs(oldSha, newSha),
-                         std::move(lr));
-}
+constexpr Command kCommands[] = {
+    {L"--version",       RunVersion,  Console::Keep},
+    {L"-v",              RunVersion,  Console::Keep},
+    {L"test-git",        RunTestGit,  Console::Free},
+    {L"pull-log",        RunPullLog,  Console::KeepUntilDetached},
+    {L"log",             RunLog,      Console::KeepUntilDetached},
+    {L"log-range",       RunLogRange, Console::Free},
+    {L"branch",          RunBranch,   Console::KeepUntilDetached},
+    {L"install-alias",   [](int, wchar_t**) { return RunInstallAlias(); },
+                         Console::Keep},
+    {L"uninstall-alias", [](int, wchar_t**) { return RunUninstallAlias(); },
+                         Console::Keep},
+};
 
 }
 
 int Dispatch(int argc, wchar_t** argv) {
-    const std::wstring_view cmd =
+    const std::wstring_view name =
         (argc >= 2) ? std::wstring_view{argv[1]} : std::wstring_view{};
+    const auto command = std::ranges::find(kCommands, name, &Command::name);
+    const bool found   = command != std::end(kCommands);
 
-    const bool spawnsDialog =
-        cmd == L"pull-log" || cmd == L"log" || cmd == L"branch";
-    const bool writesConsole =
-        cmd == L"install-alias" || cmd == L"uninstall-alias" ||
-        cmd == L"--version" || cmd == L"-v";
-
+    const Console console = found ? command->console : Console::Free;
     const bool keepConsole =
-        writesConsole ||
-        (spawnsDialog && !IsDetachedInvocation(argc, argv));
+        console == Console::Keep ||
+        (console == Console::KeepUntilDetached &&
+         !IsDetachedInvocation(argc, argv));
     if (!keepConsole) FreeConsole();
 
-    if (cmd == L"--version" ||
-        cmd == L"-v")              return RunVersion();
-    if (cmd == L"test-git")        return RunTestGit();
-    if (cmd == L"pull-log")        return RunPullLog(argc, argv);
-    if (cmd == L"log")             return RunLog(argc, argv);
-    if (cmd == L"log-range")       return RunLogRange(argc, argv);
-    if (cmd == L"branch")          return RunBranch(argc, argv);
-    if (cmd == L"install-alias")   return RunInstallAlias();
-    if (cmd == L"uninstall-alias") return RunUninstallAlias();
-    return RunUsage();
+    return found ? command->run(argc, argv) : RunUsage();
 }
 
 }
