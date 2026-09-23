@@ -240,19 +240,27 @@ void ApplyCommitDetails(LogWindowData* d, CommitDetails&& details) {
 
     SendMessageW(d->hChgList, LVM_DELETEALLITEMS, 0, 0);
     d->currentChanges = std::move(details.changes);
+    ListView_SetItemCountEx(d->hChgList,
+                            static_cast<int>(d->currentChanges.size()), 0);
+}
 
-    int row = 0;
-    for (const auto& fc : d->currentChanges) {
-        std::wstring name = fc.path;
-        if ((fc.kind == FileChangeKind::Renamed ||
-             fc.kind == FileChangeKind::Copied) && !fc.oldPath.empty()) {
-            name = fc.oldPath + L" -> " + fc.path;
-        }
-        AppendRowCells(
-            d->hChgList, row++,
-            {name, std::wstring(1, fc.kindChar),
-             FormatCount(fc.insertions, fc.kind == FileChangeKind::Deleted),
-             FormatCount(fc.deletions, fc.kind == FileChangeKind::Added)});
+std::wstring ChangeName(const FileChange& fc) {
+    if ((fc.kind == FileChangeKind::Renamed ||
+         fc.kind == FileChangeKind::Copied) && !fc.oldPath.empty()) {
+        return fc.oldPath + L" -> " + fc.path;
+    }
+    return fc.path;
+}
+
+std::wstring ChangeCell(const FileChange& fc, int column) {
+    switch (column) {
+        case 0: return ChangeName(fc);
+        case 1: return std::wstring(1, fc.kindChar);
+        case 2: return FormatCount(fc.insertions,
+                                   fc.kind == FileChangeKind::Deleted);
+        case 3: return FormatCount(fc.deletions,
+                                   fc.kind == FileChangeKind::Added);
+        default: return {};
     }
 }
 
@@ -426,7 +434,7 @@ void CreateChildren(LogWindowData* d, HWND hwnd) {
         GetModuleHandleW(nullptr), nullptr);
 
     d->hChgLabel = CreateLabel(hwnd, L"C&hanges");
-    d->hChgList  = CreateListView(hwnd, kIdChangesList);
+    d->hChgList  = CreateListView(hwnd, kIdChangesList, LVS_OWNERDATA);
 
     d->out.Create(hwnd, kIdOutputEdit, kIdStatusBar, WM_GITTOOLS_TRANSCRIPT);
     EnableSelectAll(d->hMsgEdit);
@@ -459,14 +467,15 @@ bool StartsWithNoCase(const std::wstring& text, const std::wstring& prefix) {
            == CSTR_EQUAL;
 }
 
-int FindCommitByPrefix(LogWindowData* d, const NMLVFINDITEMW* fi) {
+template <typename TextAt>
+int FindByPrefix(const NMLVFINDITEMW* fi, size_t total, TextAt&& textAt) {
     if (!fi->lvfi.psz) return -1;
     if (!(fi->lvfi.flags & (LVFI_STRING | LVFI_PARTIAL | LVFI_SUBSTRING))) {
         return -1;
     }
 
     const std::wstring prefix = fi->lvfi.psz;
-    const int count = static_cast<int>(d->commitCount());
+    const int count = static_cast<int>(total);
     if (count == 0) return -1;
 
     int start = fi->iStart;
@@ -476,16 +485,31 @@ int FindCommitByPrefix(LogWindowData* d, const NMLVFINDITEMW* fi) {
     const bool wrap = (fi->lvfi.flags & LVFI_WRAP) != 0;
     const int  span = wrap ? count : count - start;
 
+    std::wstring text;
     for (int n = 0; n < span; ++n) {
         int i = start + n;
         if (i >= count) i -= count;
-        std::wstring subject;
-        if (d->params.loader->Subject(i, subject) &&
-            StartsWithNoCase(subject, prefix)) {
+        if (textAt(static_cast<size_t>(i), text) &&
+            StartsWithNoCase(text, prefix)) {
             return i;
         }
     }
     return -1;
+}
+
+int FindCommitByPrefix(LogWindowData* d, const NMLVFINDITEMW* fi) {
+    return FindByPrefix(fi, d->commitCount(),
+                        [d](size_t i, std::wstring& text) {
+                            return d->params.loader->Subject(i, text);
+                        });
+}
+
+int FindChangeByPrefix(LogWindowData* d, const NMLVFINDITEMW* fi) {
+    return FindByPrefix(fi, d->currentChanges.size(),
+                        [d](size_t i, std::wstring& text) {
+                            text = ChangeName(d->currentChanges[i]);
+                            return true;
+                        });
 }
 
 bool ContextMenuAnchor(HWND list, LPARAM lParam, POINT& pt) {
@@ -687,12 +711,28 @@ INT_PTR CALLBACK LogDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return FALSE;
             }
 
+            if (nm->code == LVN_GETDISPINFO &&
+                nm->idFrom == kIdChangesList) {
+                auto* di = reinterpret_cast<NMLVDISPINFOW*>(lParam);
+                const int row = di->item.iItem;
+                if (row >= 0 &&
+                    static_cast<size_t>(row) < d->currentChanges.size() &&
+                    (di->item.mask & LVIF_TEXT)) {
+                    d->dispText = ChangeCell(d->currentChanges[row],
+                                             di->item.iSubItem);
+                    di->item.pszText = d->dispText.data();
+                }
+                return FALSE;
+            }
+
             if (nm->code == LVN_ODFINDITEM &&
-                nm->idFrom == kIdCommitList) {
+                (nm->idFrom == kIdCommitList || nm->idFrom == kIdChangesList)) {
                 auto* fi = reinterpret_cast<NMLVFINDITEMW*>(lParam);
-                SetWindowLongPtrW(
-                    hwnd, DWLP_MSGRESULT,
-                    static_cast<LONG_PTR>(FindCommitByPrefix(d, fi)));
+                const int found = (nm->idFrom == kIdCommitList)
+                                      ? FindCommitByPrefix(d, fi)
+                                      : FindChangeByPrefix(d, fi);
+                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT,
+                                  static_cast<LONG_PTR>(found));
                 return TRUE;
             }
 

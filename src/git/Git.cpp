@@ -134,6 +134,7 @@ std::unordered_map<std::wstring, NumStat>
 ParseNumstat(const std::wstring& output) {
     std::unordered_map<std::wstring, NumStat> result;
     ForEachLine(output, [&](const std::wstring& line) {
+        if (line[0] == L':') return;
         std::vector<std::wstring> fields = SplitOn(line, L'\t');
         if (fields.size() >= 3) {
             NumStat ns;
@@ -145,10 +146,14 @@ ParseNumstat(const std::wstring& output) {
     return result;
 }
 
-std::vector<FileChange> ParseNameStatus(const std::wstring& output) {
+std::vector<FileChange> ParseRawStatus(const std::wstring& output) {
     std::vector<FileChange> result;
     ForEachLine(output, [&](const std::wstring& line) {
-        std::vector<std::wstring> fields = SplitOn(line, L'\t');
+        if (line[0] != L':') return;
+        const size_t tab   = line.find(L'\t');
+        const size_t space = line.rfind(L' ', tab);
+        if (tab == std::wstring::npos || space == std::wstring::npos) return;
+        std::vector<std::wstring> fields = SplitOn(line.substr(space + 1), L'\t');
         if (fields.size() >= 2 && !fields[0].empty()) {
             FileChange fc;
             fc.kindChar = fields[0][0];
@@ -478,30 +483,27 @@ CommitDetails LoadCommitDetails(const std::wstring& sha,
     details.sha = sha;
 
     ProcessResult r = RunGit(
-        {L"show", L"--format=%B%x00", kDiffMerges, L"--name-status", sha},
+        {L"show", L"--format=%B%x00", kDiffMerges, L"--raw", L"--numstat", sha},
         cwd, StdioMode::Capture, cancel);
     if (!r.started || r.exitCode != 0) return details;
 
     const std::wstring output = Utf8ToWide(r.stdoutText);
     const size_t nul = output.find(L'\0');
+    std::wstring diff;
     if (nul != std::wstring::npos) {
         details.message = RStripW(output.substr(0, nul));
-        details.changes = ParseNameStatus(output.substr(nul + 1));
+        diff = output.substr(nul + 1);
     } else {
-        details.changes = ParseNameStatus(output);
+        diff = output;
     }
 
-    ProcessResult n = RunGit(
-        {L"show", L"--format=", kDiffMerges, L"--numstat", sha},
-        cwd, StdioMode::Capture, cancel);
-    if (n.started && n.exitCode == 0) {
-        auto stats = ParseNumstat(Utf8ToWide(n.stdoutText));
-        for (auto& fc : details.changes) {
-            auto it = stats.find(fc.path);
-            if (it != stats.end()) {
-                fc.insertions = it->second.insertions;
-                fc.deletions  = it->second.deletions;
-            }
+    details.changes = ParseRawStatus(diff);
+    auto stats = ParseNumstat(diff);
+    for (auto& fc : details.changes) {
+        auto it = stats.find(fc.path);
+        if (it != stats.end()) {
+            fc.insertions = it->second.insertions;
+            fc.deletions  = it->second.deletions;
         }
     }
     return details;
