@@ -245,6 +245,18 @@ inline LRESULT CALLBACK SelectAllEditProc(HWND hwnd, UINT msg, WPARAM wParam,
     if (msg == WM_GETDLGCODE) {
         return DefSubclassProc(hwnd, msg, wParam, lParam) & ~DLGC_HASSETSEL;
     }
+    if (msg == WM_SETFOCUS) {
+        LRESULT r = DefSubclassProc(hwnd, msg, wParam, lParam);
+        DWORD start = 0, end = 0;
+        SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&start),
+                     reinterpret_cast<LPARAM>(&end));
+        if (start == 0 && end != 0 &&
+            end == static_cast<DWORD>(GetWindowTextLengthW(hwnd))) {
+            SendMessageW(hwnd, EM_SETSEL, 0, 0);
+            SendMessageW(hwnd, EM_SCROLLCARET, 0, 0);
+        }
+        return r;
+    }
     if (msg == WM_NCDESTROY) {
         RemoveWindowSubclass(hwnd, SelectAllEditProc, 1);
     } else if (msg == WM_KEYDOWN && wParam == 'A' &&
