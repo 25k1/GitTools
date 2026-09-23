@@ -6,8 +6,7 @@
 
 #include <shellapi.h>
 
-#include <filesystem>
-#include <system_error>
+#include <algorithm>
 #include <vector>
 
 namespace git_tools {
@@ -80,8 +79,13 @@ std::wstring Quoted(const std::wstring& s) {
     return L"\"" + s + L"\"";
 }
 
+size_t LastSeparator(const std::wstring& path) {
+    return path.find_last_of(L"\\/");
+}
+
 bool IsNotepadPlusPlus(const std::wstring& exe) {
-    return ToLower(std::filesystem::path(exe).filename().wstring()) ==
+    const size_t slash = LastSeparator(exe);
+    return ToLower(slash == std::wstring::npos ? exe : exe.substr(slash + 1)) ==
            L"notepad++.exe";
 }
 
@@ -101,18 +105,21 @@ bool Launch(HWND owner, const std::wstring& file, const std::wstring& args) {
 std::wstring RepoFilePath(const std::wstring& repoRoot,
                           const std::wstring& relativePath) {
     if (repoRoot.empty()) return {};
-    return (std::filesystem::path(repoRoot) / relativePath)
-        .make_preferred()
-        .wstring();
+    std::wstring path = repoRoot;
+    if (!path.ends_with(L'/') && !path.ends_with(L'\\')) path += L'\\';
+    path += relativePath;
+    std::ranges::replace(path, L'/', L'\\');
+    return path;
 }
 
 std::wstring ParentDirectory(const std::wstring& path) {
-    return std::filesystem::path(path).parent_path().wstring();
+    const size_t slash = LastSeparator(path);
+    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
 }
 
 bool PathExists(const std::wstring& path) {
-    std::error_code ec;
-    return !path.empty() && std::filesystem::exists(path, ec);
+    return !path.empty() &&
+           GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
 void ResetEditorCache() { EditorCache() = EditorCacheData(); }

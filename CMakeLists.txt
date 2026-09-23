@@ -49,6 +49,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(GITTOOLS_LTO "Link-time optimisation in optimised builds" ON)
 option(GITTOOLS_EXCEPTIONS "Build with C++ exceptions enabled" OFF)
 option(GITTOOLS_STATIC_CRT "Statically link the MSVC C runtime" ON)
+option(GITTOOLS_HYBRID_CRT "With the static CRT, use the Windows 10+ system UCRT" ON)
 if(GITTOOLS_STATIC_CRT)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
@@ -100,6 +101,12 @@ if(MSVC)
         "$<${GITTOOLS_OPT_LINK}:/INCREMENTAL:NO>"
     )
 
+    if(GITTOOLS_STATIC_CRT AND GITTOOLS_HYBRID_CRT)
+        set(GITTOOLS_UCRT "ucrt$<$<CONFIG:Debug>:d>.lib")
+        add_link_options("/NODEFAULTLIB:lib${GITTOOLS_UCRT}"
+                         "/DEFAULTLIB:${GITTOOLS_UCRT}")
+    endif()
+
     if(GITTOOLS_CLANG_CL)
         add_compile_options("$<${GITTOOLS_OPT}:/clang:-Oz>")
     endif()
@@ -112,8 +119,8 @@ if(MSVC)
         find_program(GITTOOLS_LLD_LINK NAMES lld-link HINTS "${GITTOOLS_CLANG_DIR}")
         if(GITTOOLS_LLD_LINK)
             set(CMAKE_LINKER "${GITTOOLS_LLD_LINK}")
-            add_compile_options("$<${GITTOOLS_OPT}:-flto=thin>")
-            message(STATUS "gittools: ThinLTO via ${GITTOOLS_LLD_LINK}")
+            add_compile_options("$<${GITTOOLS_OPT}:-flto>")
+            message(STATUS "gittools: LTO via ${GITTOOLS_LLD_LINK}")
         else()
             message(STATUS "gittools: lld-link not found, LTO off")
         endif()
@@ -127,8 +134,19 @@ add_compile_definitions(
     WIN32_LEAN_AND_MEAN
 )
 
+include(FetchContent)
+FetchContent_Declare(
+    miniaudio
+    URL https://github.com/mackron/miniaudio/archive/refs/tags/0.11.25.tar.gz
+    URL_HASH SHA256=b900edcffe979816e2560a0580b9b1216d674b4f17fbadeca8f777a7f8ab0274
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR do-not-add-subdirectory
+)
+FetchContent_MakeAvailable(miniaudio)
+
 add_executable(gittools
     src/main.cpp
+    src/audio/Audio.cpp
     src/cli/Alias.cpp
     src/cli/Branches.cpp
     src/cli/Detached.cpp
@@ -152,6 +170,7 @@ add_executable(gittools
 )
 
 target_include_directories(gittools PRIVATE src "${GITTOOLS_GENERATED_DIR}")
+target_include_directories(gittools SYSTEM PRIVATE "${miniaudio_SOURCE_DIR}")
 
 target_link_libraries(gittools PRIVATE
     comctl32
@@ -160,7 +179,7 @@ target_link_libraries(gittools PRIVATE
     shell32
     advapi32
     cabinet
-    winmm
+    ole32
 )
 
 if(MSVC)

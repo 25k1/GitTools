@@ -14,6 +14,4 @@ struct DiffWindowParams {
 
 int ShowDiffWindow(HWND owner, const DiffWindowParams& params);
 
-void ResetSoundCache();
-
 }

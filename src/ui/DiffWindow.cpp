@@ -1,5 +1,6 @@
 #include "ui/DiffWindow.hpp"
 
+#include "audio/Audio.hpp"
 #include "git/Config.hpp"
 #include "ui/DialogUtil.hpp"
 #include "ui/FindDialog.hpp"
@@ -9,10 +10,8 @@
 
 #include <windows.h>
 #include <commctrl.h>
-#include <mmsystem.h>
 
 #include <algorithm>
-#include <cstring>
 #include <iterator>
 #include <vector>
 
@@ -37,122 +36,9 @@ struct DiffWindowData {
     }
 };
 
-struct WavInfo {
-    uint16_t audioFormat   = 0;
-    uint16_t bitsPerSample = 0;
-    uint32_t dataOffset    = 0;
-    uint32_t dataSize      = 0;
-};
-
-WavInfo ParseWav(const uint8_t* data, size_t size) {
-    WavInfo info;
-    if (size < 12) return info;
-    if (memcmp(data,     "RIFF", 4) != 0) return info;
-    if (memcmp(data + 8, "WAVE", 4) != 0) return info;
-
-    size_t pos = 12;
-    while (pos + 8 <= size) {
-        uint32_t chunkSize = 0;
-        memcpy(&chunkSize, data + pos + 4, 4);
-        const size_t chunkStart = pos + 8;
-
-        if (memcmp(data + pos, "fmt ", 4) == 0 && chunkStart + 16 <= size) {
-            memcpy(&info.audioFormat,   data + chunkStart + 0,  2);
-            memcpy(&info.bitsPerSample, data + chunkStart + 14, 2);
-        } else if (memcmp(data + pos, "data", 4) == 0) {
-            info.dataOffset = static_cast<uint32_t>(chunkStart);
-            info.dataSize   = chunkSize;
-            break;
-        }
-        pos = chunkStart + chunkSize + (chunkSize & 1);
-    }
-    return info;
-}
-
-void ScaleWavVolume(uint8_t* data, size_t size, float factor) {
-    WavInfo info = ParseWav(data, size);
-    if (info.dataOffset == 0 || info.dataSize == 0) return;
-    if (info.dataOffset + info.dataSize > size) {
-        info.dataSize = static_cast<uint32_t>(size - info.dataOffset);
-    }
-    uint8_t* samples = data + info.dataOffset;
-    const uint32_t bytes = info.dataSize;
-
-    if (info.audioFormat == 1 && info.bitsPerSample == 16) {
-        auto* s = reinterpret_cast<int16_t*>(samples);
-        for (size_t i = 0; i < bytes / 2; ++i) {
-            s[i] = static_cast<int16_t>(s[i] * factor);
-        }
-    } else if (info.audioFormat == 1 && info.bitsPerSample == 8) {
-        for (size_t i = 0; i < bytes; ++i) {
-            const int v = static_cast<int>(samples[i]) - 128;
-            samples[i] = static_cast<uint8_t>(static_cast<int>(v * factor) + 128);
-        }
-    } else if (info.audioFormat == 1 && info.bitsPerSample == 24) {
-        for (size_t i = 0; i + 3 <= bytes; i += 3) {
-            int32_t v = static_cast<int32_t>(samples[i])
-                      | (static_cast<int32_t>(samples[i + 1]) << 8)
-                      | (static_cast<int32_t>(
-                            static_cast<int8_t>(samples[i + 2])) << 16);
-            v = static_cast<int32_t>(v * factor);
-            samples[i]     = static_cast<uint8_t>( v        & 0xFF);
-            samples[i + 1] = static_cast<uint8_t>((v >> 8)  & 0xFF);
-            samples[i + 2] = static_cast<uint8_t>((v >> 16) & 0xFF);
-        }
-    } else if (info.audioFormat == 3 && info.bitsPerSample == 32) {
-        auto* s = reinterpret_cast<float*>(samples);
-        for (size_t i = 0; i < bytes / 4; ++i) s[i] *= factor;
-    }
-}
-
-struct SoundCache {
-    bool                 loaded = false;
-    float                volume = -1.0f;
-    std::vector<uint8_t> inserted;
-    std::vector<uint8_t> deleted;
-};
-
-SoundCache& Sounds() {
-    static SoundCache cache;
-    return cache;
-}
-
-float SoundVolume() {
-    float& volume = Sounds().volume;
-    if (volume < 0.0f) volume = static_cast<float>(SoundVolumePercent()) / 100.0f;
-    return volume;
-}
-
-std::vector<uint8_t> LoadSound(LPCWSTR name) {
-    HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC   res    = FindResourceW(module, name, L"WAVE");
-    HGLOBAL data   = res ? LoadResource(module, res) : nullptr;
-    const auto* p  = static_cast<const uint8_t*>(data ? LockResource(data)
-                                                      : nullptr);
-    if (!p) return {};
-    std::vector<uint8_t> wav(p, p + SizeofResource(module, res));
-    if (const float volume = SoundVolume(); volume < 1.0f) {
-        ScaleWavVolume(wav.data(), wav.size(), volume);
-    }
-    return wav;
-}
-
 void PlayDiffSoundForLine(wchar_t firstChar) {
-    if ((firstChar != L'+' && firstChar != L'-') || SoundVolume() <= 0.0f) {
-        return;
-    }
-    SoundCache& sounds = Sounds();
-    if (!sounds.loaded) {
-        sounds.loaded   = true;
-        sounds.inserted = LoadSound(L"diffLineInserted");
-        sounds.deleted  = LoadSound(L"diffLineDeleted");
-    }
-    const std::vector<uint8_t>& wav =
-        firstChar == L'+' ? sounds.inserted : sounds.deleted;
-    if (!wav.empty()) {
-        PlaySoundW(reinterpret_cast<LPCWSTR>(wav.data()), nullptr,
-                   SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
-    }
+    if (firstChar == L'+')      PlaySoundResource(L"diffLineInserted");
+    else if (firstChar == L'-') PlaySoundResource(L"diffLineDeleted");
 }
 
 void CheckCaretLineAndPlay(HWND edit, DiffWindowData* d) {
@@ -477,15 +363,12 @@ INT_PTR CALLBACK DiffDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
 }
 
-void ResetSoundCache() {
-    PlaySoundW(nullptr, nullptr, 0);
-    Sounds() = SoundCache();
-}
-
 int ShowDiffWindow(HWND owner, const DiffWindowParams& params) {
     DiffWindowData data;
     data.params = &params;
-    return RunDialog(params.title, 600, 480, owner, DiffDlgProc, &data);
+    const int result = RunDialog(params.title, 600, 480, owner, DiffDlgProc, &data);
+    CloseAudio();
+    return result;
 }
 
 }

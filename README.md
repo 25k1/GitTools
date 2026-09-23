@@ -62,6 +62,8 @@ Settings live in your global git config under `gittools`. File > Options and the
 | --- | --- | --- |
 | `gittools.editor` | auto-detect | Editor command. `%1` is the file path (appended if absent), `%L` the line number. Notepad++ is found automatically and gets `-n<line>` |
 | `gittools.soundvolume` | `50` | Diff line sound volume, 0-100; `0` silences them |
+| `gittools.audiodevice` | default device | WASAPI output device id for the diff line sounds |
+| `gittools.unloadfarcommits` | `false` | Drop commits far from view in huge logs and reload them from git when needed |
 | `gittools.wraparound` | `false` | Whether find wraps past the end |
 | `gittools.debug` | `false` | Show the Output pane with the full git transcript |
 

@@ -10,6 +10,7 @@ inline constexpr wchar_t kSoundVolumeKey[]      = L"soundvolume";
 inline constexpr wchar_t kWrapAroundKey[]       = L"wraparound";
 inline constexpr wchar_t kDebugOutputKey[]      = L"debug";
 inline constexpr wchar_t kUnloadFarCommitsKey[] = L"unloadfarcommits";
+inline constexpr wchar_t kAudioDeviceKey[]      = L"audiodevice";
 
 std::wstring ConfigGet(const std::wstring& key,
                        const std::wstring& fallback = L"");

@@ -1,11 +1,13 @@
 #include "ui/OptionsDialog.hpp"
 
+#include "audio/Audio.hpp"
 #include "git/Config.hpp"
 #include "ui/DialogUtil.hpp"
-#include "ui/DiffWindow.hpp"
 #include "ui/Shell.hpp"
 
+#include <algorithm>
 #include <string>
+#include <vector>
 
 namespace git_tools {
 
@@ -15,12 +17,15 @@ constexpr int kIdEditorCommand = 4101;
 constexpr int kIdVolume        = 4102;
 constexpr int kIdVolumeValue   = 4103;
 constexpr int kIdUnloadFar     = 4104;
+constexpr int kIdAudioDevice   = 4105;
 
 struct OptionsDialogData {
-    HWND hCommand     = nullptr;
-    HWND hVolume      = nullptr;
-    HWND hVolumeValue = nullptr;
-    HWND hUnloadFar   = nullptr;
+    HWND                     hCommand     = nullptr;
+    HWND                     hVolume      = nullptr;
+    HWND                     hVolumeValue = nullptr;
+    HWND                     hUnloadFar   = nullptr;
+    HWND                     hDevice      = nullptr;
+    std::vector<AudioDevice> devices;
 };
 
 int VolumePos(const OptionsDialogData* d) {
@@ -47,6 +52,7 @@ void CreateControls(OptionsDialogData* d, HWND hwnd) {
     const int     fieldW  = width - kFieldX - kMargin;
     const int     volY    =
         rc.bottom - kMargin - kButtonHeight - kGap - kVolH;
+    const int     devY    = volY - kGap - kRowH;
 
     CreateChildControl(hwnd, L"STATIC", L"&Editor path:", SS_LEFT, 0, -1,
                        kMargin, kMargin + 4, kLabelW, 18);
@@ -67,7 +73,13 @@ void CreateControls(OptionsDialogData* d, HWND hwnd) {
         L"&Unload commits far from view to save memory "
         L"(reloaded from git when needed)",
         WS_TABSTOP | BS_AUTOCHECKBOX, 0, kIdUnloadFar,
-        kMargin, volY - kGap - kCheckH, width - 2 * kMargin, kCheckH);
+        kMargin, devY - kGap - kCheckH, width - 2 * kMargin, kCheckH);
+
+    CreateChildControl(hwnd, L"STATIC", L"Output &device:", SS_LEFT, 0, -1,
+                       kMargin, devY + 4, kLabelW, 18);
+    d->hDevice = CreateChildControl(
+        hwnd, L"COMBOBOX", L"", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, 0,
+        kIdAudioDevice, kFieldX, devY, fieldW, 200);
 
     CreateChildControl(hwnd, L"STATIC", L"&Volume:", SS_LEFT, 0, -1,
                        kMargin, volY + 6, kLabelW, 18);
@@ -80,6 +92,29 @@ void CreateControls(OptionsDialogData* d, HWND hwnd) {
         width - kMargin - kValueW, volY + 6, kValueW, 18);
 
     CreateOkCancelButtons(hwnd, kMargin, kGap);
+}
+
+void FillAudioDevices(OptionsDialogData* d) {
+    const std::wstring saved = ConfigGet(kAudioDeviceKey);
+    d->devices = ListAudioDevices();
+    d->devices.insert(d->devices.begin(), AudioDevice{L"", L"Default device"});
+    auto selected = std::ranges::find(d->devices, saved, &AudioDevice::id);
+    if (selected == d->devices.end()) {
+        d->devices.push_back(AudioDevice{saved, L"Unavailable device"});
+        selected = d->devices.end() - 1;
+    }
+    for (const AudioDevice& device : d->devices) {
+        SendMessageW(d->hDevice, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(device.name.c_str()));
+    }
+    SendMessageW(d->hDevice, CB_SETCURSEL, selected - d->devices.begin(), 0);
+}
+
+std::wstring SelectedAudioDevice(const OptionsDialogData* d) {
+    const LRESULT i = SendMessageW(d->hDevice, CB_GETCURSEL, 0, 0);
+    return (i >= 0 && static_cast<size_t>(i) < d->devices.size())
+               ? d->devices[i].id
+               : std::wstring();
 }
 
 INT_PTR CALLBACK OptionsDlgProc(HWND hwnd, UINT msg,
@@ -100,6 +135,7 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hwnd, UINT msg,
             SendMessageW(d->hVolume, TBM_SETPOS, TRUE, SoundVolumePercent());
             UpdateVolumeLabel(d);
             SetChecked(d->hUnloadFar, ConfigGetBool(kUnloadFarCommitsKey, false));
+            FillAudioDevices(d);
 
             SetFocus(d->hCommand);
             SendMessageW(d->hCommand, EM_SETSEL, 0, -1);
@@ -115,8 +151,9 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hwnd, UINT msg,
             ConfigSet(kEditorKey, ControlText(d->hCommand));
             ConfigSet(kSoundVolumeKey, std::to_wstring(VolumePos(d)));
             ConfigSetBool(kUnloadFarCommitsKey, IsChecked(d->hUnloadFar));
+            ConfigSet(kAudioDeviceKey, SelectedAudioDevice(d));
             ResetEditorCache();
-            ResetSoundCache();
+            CloseAudio();
             EndDialog(hwnd, 1);
             return TRUE;
     }
@@ -127,7 +164,7 @@ INT_PTR CALLBACK OptionsDlgProc(HWND hwnd, UINT msg,
 
 bool ShowOptionsDialog(HWND owner) {
     OptionsDialogData data;
-    return RunDialogEx(L"Options", 340, 150, owner, OptionsDlgProc,
+    return RunDialogEx(L"Options", 340, 170, owner, OptionsDlgProc,
                        &data, false) == 1;
 }
 

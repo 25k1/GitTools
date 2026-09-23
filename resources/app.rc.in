@@ -2,8 +2,8 @@
 
 1 24 "@GITTOOLS_GENERATED_DIR@/app.manifest"
 
-diffLineInserted WAVE "@GITTOOLS_RESOURCE_DIR@/diffLineInserted.wav"
-diffLineDeleted  WAVE "@GITTOOLS_RESOURCE_DIR@/diffLineDeleted.wav"
+diffLineInserted FLAC "@GITTOOLS_RESOURCE_DIR@/diffLineInserted.flac"
+diffLineDeleted  FLAC "@GITTOOLS_RESOURCE_DIR@/diffLineDeleted.flac"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION    @GITTOOLS_VERSION_FIELDS@
