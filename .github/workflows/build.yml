@@ -32,22 +32,56 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Build
+      - name: Set up MSVC environment
+        id: msvc
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vs) { throw 'No Visual Studio with the C++ toolset found' }
+
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$' -and
+                [Environment]::GetEnvironmentVariable($Matches[1]) -ne $Matches[2]) {
+              "$($Matches[1])=$($Matches[2])" >> $env:GITHUB_ENV
+            }
+          }
+
+          $ninja = "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
+          if (Test-Path "$ninja\ninja.exe") { $ninja >> $env:GITHUB_PATH }
+
+          $clang = Join-Path $vs 'VC\Tools\Llvm\x64\bin\clang-cl.exe'
+          if (-not (Test-Path $clang)) { $clang = (Get-Command clang-cl).Source }
+          & $clang --version | Select-Object -First 1
+          "clang=$($clang -replace '\\', '/')" >> $env:GITHUB_OUTPUT
+
+      - name: Configure
         shell: pwsh
         env:
+          CLANG: ${{ steps.msvc.outputs.clang }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $buildArgs = @('Release', 'clean')
-          if ($env:VERSION) { $buildArgs += "-DGITTOOLS_VERSION=$env:VERSION" }
-          & .\build.bat @buildArgs
+          $cmakeArgs = @(
+            '-S', '.', '-B', 'build', '-G', 'Ninja',
+            '-DCMAKE_BUILD_TYPE=Release',
+            "-DCMAKE_C_COMPILER=$env:CLANG",
+            "-DCMAKE_CXX_COMPILER=$env:CLANG"
+          )
+          if ($env:VERSION) { $cmakeArgs += "-DGITTOOLS_VERSION=$env:VERSION" }
+          cmake @cmakeArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        run: cmake --build build
 
       - name: Check version stamp
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $exe = 'build-clang\gittools.exe'
+          $exe = 'build\gittools.exe'
           $reported = (& $exe --version | Out-String).Trim()
           $info = (Get-Item $exe).VersionInfo
           Write-Host "gittools --version : $reported"
@@ -64,7 +98,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          path: build-clang/gittools.exe
+          path: build/gittools.exe
           archive: false
           if-no-files-found: error
 
