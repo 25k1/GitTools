@@ -162,27 +162,74 @@ if(MSVC)
 else()
     set(GITTOOLS_CXX "$<COMPILE_LANGUAGE:CXX>")
     set(GITTOOLS_OPT_LINK "$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>")
+    set(GITTOOLS_OPT "$<AND:$<COMPILE_LANGUAGE:C,CXX>,${GITTOOLS_OPT_LINK}>")
+    set(GITTOOLS_OPT_CXX "$<AND:$<COMPILE_LANGUAGE:CXX>,${GITTOOLS_OPT_LINK}>")
 
-    string(REPLACE "-O3" "-Os"
-        CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-    string(REPLACE "-O3" "-Os"
-        CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(GITTOOLS_CLANG TRUE)
+        set(GITTOOLS_SIZE_FLAG "-Oz")
+    else()
+        set(GITTOOLS_CLANG FALSE)
+        set(GITTOOLS_SIZE_FLAG "-Os")
+    endif()
+    foreach(lang C CXX)
+        string(REPLACE "-O3" "${GITTOOLS_SIZE_FLAG}"
+            CMAKE_${lang}_FLAGS_RELEASE "${CMAKE_${lang}_FLAGS_RELEASE}")
+    endforeach()
 
     add_compile_options("$<${GITTOOLS_CXX}:-fno-rtti>")
     if(NOT GITTOOLS_EXCEPTIONS)
-        add_compile_options("$<${GITTOOLS_CXX}:-fno-exceptions>")
+        add_compile_options(
+            "$<${GITTOOLS_CXX}:-fno-exceptions>"
+            "$<${GITTOOLS_OPT}:-fno-unwind-tables>"
+            "$<${GITTOOLS_OPT}:-fno-asynchronous-unwind-tables>"
+        )
     endif()
 
     add_compile_options(
-        "$<${GITTOOLS_OPT_LINK}:-ffunction-sections>"
-        "$<${GITTOOLS_OPT_LINK}:-fdata-sections>"
+        "$<${GITTOOLS_OPT}:-ffunction-sections>"
+        "$<${GITTOOLS_OPT}:-fdata-sections>"
     )
     add_link_options(
+        "-Wl,--as-needed"
         "$<${GITTOOLS_OPT_LINK}:-Wl,--gc-sections>"
         "$<${GITTOOLS_OPT_LINK}:-s>"
     )
 
-    if(GITTOOLS_LTO)
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX "-Wl,-z,pack-relative-relocs" GITTOOLS_HAS_RELR)
+    if(GITTOOLS_HAS_RELR)
+        add_link_options("-Wl,-z,pack-relative-relocs")
+    endif()
+
+    if(GITTOOLS_LTO AND GITTOOLS_CLANG)
+        get_filename_component(GITTOOLS_CLANG_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        string(REGEX MATCH "^[0-9]+" GITTOOLS_CLANG_MAJOR "${CMAKE_CXX_COMPILER_VERSION}")
+        find_program(GITTOOLS_LLD
+            NAMES ld.lld "ld.lld-${GITTOOLS_CLANG_MAJOR}"
+            HINTS "${GITTOOLS_CLANG_DIR}")
+        find_program(GITTOOLS_LLVM_AR
+            NAMES llvm-ar "llvm-ar-${GITTOOLS_CLANG_MAJOR}"
+            HINTS "${GITTOOLS_CLANG_DIR}")
+        find_program(GITTOOLS_LLVM_RANLIB
+            NAMES llvm-ranlib "llvm-ranlib-${GITTOOLS_CLANG_MAJOR}"
+            HINTS "${GITTOOLS_CLANG_DIR}")
+        if(GITTOOLS_LLD AND GITTOOLS_LLVM_AR AND GITTOOLS_LLVM_RANLIB)
+            set(CMAKE_AR "${GITTOOLS_LLVM_AR}")
+            set(CMAKE_RANLIB "${GITTOOLS_LLVM_RANLIB}")
+            add_compile_options("$<${GITTOOLS_OPT}:-flto>")
+            add_link_options("--ld-path=${GITTOOLS_LLD}" "$<${GITTOOLS_OPT_LINK}:-flto>")
+            if(GITTOOLS_VFE)
+                add_compile_options(
+                    "$<${GITTOOLS_OPT_CXX}:-fwhole-program-vtables>"
+                    "$<${GITTOOLS_OPT_CXX}:-fvirtual-function-elimination>"
+                )
+            endif()
+            message(STATUS "gittools: LTO via ${GITTOOLS_LLD}")
+        else()
+            message(STATUS "gittools: lld or llvm-ar not found, LTO off")
+        endif()
+    elseif(GITTOOLS_LTO)
         include(CheckIPOSupported)
         check_ipo_supported(RESULT GITTOOLS_IPO LANGUAGES C CXX)
         if(GITTOOLS_IPO)
@@ -503,7 +550,12 @@ if(MSVC)
         target_link_options(gittools PRIVATE "/MAP")
     endif()
 else()
-    target_compile_options(gittools PRIVATE -Wall -Wextra)
+    target_compile_options(gittools PRIVATE
+        -Wall
+        -Wextra
+        -fvisibility=hidden
+        -fvisibility-inlines-hidden
+    )
     if(GITTOOLS_LINK_MAP)
         target_link_options(gittools PRIVATE
             "-Wl,-Map=$<TARGET_FILE_DIR:gittools>/gittools.map")

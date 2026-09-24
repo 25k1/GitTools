@@ -131,19 +131,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config libgtk-3-dev zlib1g-dev
+            clang lld llvm ninja-build pkg-config libgtk-3-dev zlib1g-dev
 
       - name: Cache build directory
         uses: actions/cache@v6
         with:
           path: build
-          key: build-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          key: build-${{ runner.os }}-clang-${{ hashFiles('CMakeLists.txt') }}
           restore-keys: |
-            build-${{ runner.os }}-
+            build-${{ runner.os }}-clang-
 
       - name: Configure
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          CC: clang
+          CXX: clang++
         run: |
           args=(-S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release)
           if [ -n "$VERSION" ]; then args+=("-DGITTOOLS_VERSION=$VERSION"); fi
