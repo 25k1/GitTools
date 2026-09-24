@@ -48,7 +48,7 @@ Download the binary from the
 [releases page](https://github.com/25k1/GitTools/releases/latest), or build it
 yourself as above: `gittools.exe` on Windows, `gittools-linux-x86_64` on Linux
 (rename it to `gittools`, `chmod +x` it and put it on your `PATH`, for example
-`~/.local/bin`; it needs GTK 3). Put it somewhere stable, then:
+`~/.local/bin`; it needs GTK 3 and a glibc at least as new as Ubuntu 26.04). Put it somewhere stable, then:
 
 ```
 gittools install-alias
