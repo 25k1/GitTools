@@ -1,6 +1,8 @@
 #include "ui/App.hpp"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <wx/app.h>
 #include <wx/clipbrd.h>
@@ -22,6 +24,8 @@ std::function<int()>& StartFunction() {
     return start;
 }
 
+#ifdef _WIN32
+
 void ForceForeground(wxTopLevelWindow* window) {
     const HWND  hwnd  = static_cast<HWND>(window->GetHWND());
     const DWORD self  = GetCurrentThreadId();
@@ -40,6 +44,14 @@ void ForceForeground(wxTopLevelWindow* window) {
 
     if (GetForegroundWindow() != hwnd) window->RequestUserAttention();
 }
+
+#else
+
+void ForceForeground(wxTopLevelWindow* window) {
+    window->Raise();
+}
+
+#endif
 
 }
 

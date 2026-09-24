@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
 project(gittools LANGUAGES C CXX)
 
-if(NOT WIN32)
-    message(FATAL_ERROR "gittools targets Windows only.")
+if(NOT WIN32 AND NOT (UNIX AND NOT APPLE))
+    message(FATAL_ERROR "gittools targets Windows and Linux.")
 endif()
 
-enable_language(RC)
+if(WIN32)
+    enable_language(RC)
+endif()
 
 set(GITTOOLS_VERSION "0.4" CACHE STRING "Version to stamp into the binary, e.g. 1.2.3 or v1.2.3-rc1")
 
@@ -38,9 +40,28 @@ message(STATUS "gittools: version ${GITTOOLS_VERSION_STR} (${GITTOOLS_VERSION_FU
 
 set(GITTOOLS_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(GITTOOLS_RESOURCE_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/resources")
-configure_file(src/Version.h.in       "${GITTOOLS_GENERATED_DIR}/Version.h"    @ONLY)
-configure_file(resources/app.manifest.in "${GITTOOLS_GENERATED_DIR}/app.manifest" @ONLY)
-configure_file(resources/app.rc.in    "${GITTOOLS_GENERATED_DIR}/app.rc"       @ONLY)
+configure_file(src/Version.h.in "${GITTOOLS_GENERATED_DIR}/Version.h" @ONLY)
+if(WIN32)
+    configure_file(resources/app.manifest.in "${GITTOOLS_GENERATED_DIR}/app.manifest" @ONLY)
+    configure_file(resources/app.rc.in "${GITTOOLS_GENERATED_DIR}/app.rc" @ONLY)
+endif()
+
+set(GITTOOLS_SOUND_DATA "")
+set(GITTOOLS_SOUND_CASES "")
+foreach(sound IN ITEMS LineInserted:diffLineInserted LineDeleted:diffLineDeleted)
+    string(REPLACE ":" ";" sound_parts "${sound}")
+    list(GET sound_parts 0 sound_name)
+    list(GET sound_parts 1 sound_file)
+    set(sound_path "${GITTOOLS_RESOURCE_DIR}/${sound_file}.flac")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${sound_path}")
+    file(READ "${sound_path}" sound_hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," sound_hex "${sound_hex}")
+    string(APPEND GITTOOLS_SOUND_DATA
+        "constexpr unsigned char k${sound_name}[] = {${sound_hex}};\n")
+    string(APPEND GITTOOLS_SOUND_CASES
+        "        case Sound::${sound_name}: return Bytes(k${sound_name});\n")
+endforeach()
+configure_file(src/audio/Sounds.cpp.in "${GITTOOLS_GENERATED_DIR}/Sounds.cpp" @ONLY)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -138,6 +159,40 @@ if(MSVC)
             message(STATUS "gittools: lld-link or llvm-lib not found, LTO off")
         endif()
     endif()
+else()
+    set(GITTOOLS_CXX "$<COMPILE_LANGUAGE:CXX>")
+    set(GITTOOLS_OPT_LINK "$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>")
+
+    string(REPLACE "-O3" "-Os"
+        CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+    string(REPLACE "-O3" "-Os"
+        CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+
+    add_compile_options("$<${GITTOOLS_CXX}:-fno-rtti>")
+    if(NOT GITTOOLS_EXCEPTIONS)
+        add_compile_options("$<${GITTOOLS_CXX}:-fno-exceptions>")
+    endif()
+
+    add_compile_options(
+        "$<${GITTOOLS_OPT_LINK}:-ffunction-sections>"
+        "$<${GITTOOLS_OPT_LINK}:-fdata-sections>"
+    )
+    add_link_options(
+        "$<${GITTOOLS_OPT_LINK}:-Wl,--gc-sections>"
+        "$<${GITTOOLS_OPT_LINK}:-s>"
+    )
+
+    if(GITTOOLS_LTO)
+        include(CheckIPOSupported)
+        check_ipo_supported(RESULT GITTOOLS_IPO LANGUAGES C CXX)
+        if(GITTOOLS_IPO)
+            set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+            set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
+            message(STATUS "gittools: LTO on")
+        else()
+            message(STATUS "gittools: LTO not supported by this toolchain, off")
+        endif()
+    endif()
 endif()
 
 include(FetchContent)
@@ -219,7 +274,6 @@ set(GITTOOLS_WX_OFF
     wxUSE_FSWATCHER
     wxUSE_GAUGE
     wxUSE_GIF
-    wxUSE_GRAPHICS_CONTEXT
     wxUSE_GRID
     wxUSE_HEADERCTRL
     wxUSE_HELP
@@ -330,11 +384,27 @@ set(GITTOOLS_WX_OFF
     wxUSE_ZIPSTREAM
     wxUSE_ZLIB
 )
+if(WIN32)
+    list(APPEND GITTOOLS_WX_OFF
+        wxUSE_GRAPHICS_CONTEXT
+    )
+else()
+    list(APPEND GITTOOLS_WX_OFF
+        wxUSE_GTKPRINT
+        wxUSE_LIBMSPACK
+        wxUSE_LIBNOTIFY
+        wxUSE_LIBSDL
+        wxUSE_SPELLCHECK
+        wxUSE_XTEST
+    )
+endif()
 foreach(wx_setting IN LISTS GITTOOLS_WX_OFF)
     set(${wx_setting} OFF CACHE BOOL "" FORCE)
 endforeach()
 set(wxBUILD_MONOLITHIC ON CACHE BOOL "" FORCE)
-set(wxBUILD_USE_STATIC_RUNTIME ${GITTOOLS_STATIC_CRT} CACHE BOOL "" FORCE)
+if(MSVC)
+    set(wxBUILD_USE_STATIC_RUNTIME ${GITTOOLS_STATIC_CRT} CACHE BOOL "" FORCE)
+endif()
 set(wxBUILD_DEBUG_LEVEL 0 CACHE STRING "" FORCE)
 set(wxUSE_EXCEPTIONS ${GITTOOLS_EXCEPTIONS} CACHE BOOL "" FORCE)
 set(wxUSE_NO_RTTI ON CACHE BOOL "" FORCE)
@@ -359,53 +429,83 @@ add_executable(gittools
     src/cli/Dispatch.cpp
     src/cli/Log.cpp
     src/cli/PullLog.cpp
-    src/git/Process.cpp
     src/git/CommitStore.cpp
-    src/git/Compression.cpp
     src/git/Config.cpp
     src/git/Git.cpp
     src/git/Transcript.cpp
     src/ui/App.cpp
     src/ui/BranchWindow.cpp
     src/ui/DiffWindow.cpp
-    src/ui/OptionsDialog.cpp
     src/ui/FindDialog.cpp
-    src/ui/Shell.cpp
     src/ui/LogWindow.cpp
+    src/ui/OptionsDialog.cpp
     src/ui/ToolFrame.cpp
     src/ui/Widgets.cpp
-    src/util/Encoding.cpp
-    "${GITTOOLS_GENERATED_DIR}/app.rc"
+    "${GITTOOLS_GENERATED_DIR}/Sounds.cpp"
 )
 
+if(WIN32)
+    set(GITTOOLS_PLATFORM_DIR src/platform/win)
+else()
+    set(GITTOOLS_PLATFORM_DIR src/platform/posix)
+endif()
+target_sources(gittools PRIVATE
+    ${GITTOOLS_PLATFORM_DIR}/Compression.cpp
+    ${GITTOOLS_PLATFORM_DIR}/Encoding.cpp
+    ${GITTOOLS_PLATFORM_DIR}/Process.cpp
+    ${GITTOOLS_PLATFORM_DIR}/Shell.cpp
+    ${GITTOOLS_PLATFORM_DIR}/System.cpp
+)
+if(WIN32)
+    target_sources(gittools PRIVATE "${GITTOOLS_GENERATED_DIR}/app.rc")
+endif()
 if(MSVC AND GITTOOLS_STATIC_CRT AND NOT GITTOOLS_EXCEPTIONS)
-    target_sources(gittools PRIVATE src/util/StdHooks.cpp)
+    target_sources(gittools PRIVATE src/platform/win/StdHooks.cpp)
 endif()
 
 target_include_directories(gittools PRIVATE src "${GITTOOLS_GENERATED_DIR}")
 target_include_directories(gittools SYSTEM PRIVATE "${miniaudio_SOURCE_DIR}")
 
 target_compile_definitions(gittools PRIVATE
-    UNICODE
-    _UNICODE
-    NOMINMAX
-    WIN32_LEAN_AND_MEAN
     wxDEBUG_LEVEL=${wxBUILD_DEBUG_LEVEL}
 )
+target_link_libraries(gittools PRIVATE wxWidgets::wxWidgets)
 
-target_link_libraries(gittools PRIVATE
-    wxWidgets::wxWidgets
-    user32
-    shell32
-    advapi32
-    cabinet
-)
+if(WIN32)
+    target_compile_definitions(gittools PRIVATE
+        UNICODE
+        _UNICODE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+    target_link_libraries(gittools PRIVATE
+        user32
+        shell32
+        advapi32
+        cabinet
+    )
+else()
+    find_package(ZLIB REQUIRED)
+    find_package(Threads REQUIRED)
+    target_link_libraries(gittools PRIVATE
+        ZLIB::ZLIB
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
+        m
+    )
+endif()
 
 if(MSVC)
     target_compile_options(gittools PRIVATE "$<${GITTOOLS_CXX}:/W4>")
     target_link_options(gittools PRIVATE "/MANIFEST:NO")
     if(GITTOOLS_LINK_MAP)
         target_link_options(gittools PRIVATE "/MAP")
+    endif()
+else()
+    target_compile_options(gittools PRIVATE -Wall -Wextra)
+    if(GITTOOLS_LINK_MAP)
+        target_link_options(gittools PRIVATE
+            "-Wl,-Map=$<TARGET_FILE_DIR:gittools>/gittools.map")
     endif()
 endif()
 

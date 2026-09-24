@@ -6,9 +6,9 @@
 #include "cli/Detached.hpp"
 #include "cli/Log.hpp"
 #include "cli/PullLog.hpp"
-#include "cli/Util.hpp"
 #include "git/Git.hpp"
 #include "ui/App.hpp"
+#include "util/System.hpp"
 
 #include <algorithm>
 #include <iterator>
@@ -39,7 +39,7 @@ int RunTestGit(int, wchar_t**) {
 }
 
 int RunVersion(int, wchar_t**) {
-    SetConsoleOutputCP(CP_UTF8);
+    UseUtf8Console();
     WriteOut(std::wstring(L"gittools ") + kVersion);
     return 0;
 }
@@ -100,7 +100,7 @@ int Dispatch(int argc, wchar_t** argv) {
         console == Console::Keep ||
         (console == Console::KeepUntilDetached &&
          !IsDetachedInvocation(argc, argv));
-    if (!keepConsole) FreeConsole();
+    if (!keepConsole) ReleaseConsole();
 
     return found ? command->run(argc, argv) : RunUsage();
 }

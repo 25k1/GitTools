@@ -2,9 +2,17 @@
 
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace git_tools {
+
+enum class Sound {
+    LineInserted,
+    LineDeleted,
+};
+
+std::string_view SoundBytes(Sound sound);
 
 struct AudioDevice {
     std::wstring id;
@@ -13,9 +21,9 @@ struct AudioDevice {
 
 std::vector<AudioDevice> ListAudioDevices();
 
-void PrepareSounds(std::initializer_list<const wchar_t*> names);
+void PrepareSounds(std::initializer_list<Sound> sounds);
 
-void PlaySoundResource(const wchar_t* name);
+void PlaySoundEffect(Sound sound);
 
 void CloseAudio();
 

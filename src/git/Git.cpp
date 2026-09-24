@@ -2,12 +2,23 @@
 
 #include "git/Config.hpp"
 #include "git/Transcript.hpp"
+#include "util/System.hpp"
 
 #include <algorithm>
 #include <iterator>
 #include <unordered_map>
 
 namespace git_tools {
+
+namespace {
+
+#ifdef _WIN32
+constexpr wchar_t kGitExecutable[] = L"git.exe";
+#else
+constexpr wchar_t kGitExecutable[] = L"git";
+#endif
+
+}
 
 ProcessResult RunGit(const std::vector<std::wstring>& args,
                      const std::wstring& cwd,
@@ -17,7 +28,7 @@ ProcessResult RunGit(const std::vector<std::wstring>& args,
                      const std::string* input) {
     NoteGitStart(args);
     ProcessResult r =
-        RunProcess(L"git.exe", args, cwd, stdio, cancel, onStdout, input);
+        RunProcess(kGitExecutable, args, cwd, stdio, cancel, onStdout, input);
     if (cancel && cancel->Cancelled()) RecordGitCancelled(args);
     else                               RecordGitRun(args, r);
     return r;

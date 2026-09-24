@@ -80,4 +80,21 @@ inline std::wstring NormalizeCRLF(std::wstring_view s) {
     return out;
 }
 
+inline std::wstring NormalizeLF(std::wstring_view s) {
+    std::wstring out;
+    out.reserve(s.size());
+    for (wchar_t c : s) {
+        if (c != L'\r') out += c;
+    }
+    return out;
+}
+
+inline std::wstring NativeLineEnds(std::wstring_view s) {
+#ifdef _WIN32
+    return NormalizeCRLF(s);
+#else
+    return NormalizeLF(s);
+#endif
+}
+
 }

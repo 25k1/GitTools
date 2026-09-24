@@ -1,7 +1,6 @@
 #pragma once
 
-#include <windows.h>
-
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -9,41 +8,6 @@
 #include <vector>
 
 namespace git_tools {
-
-inline std::wstring CurrentDirectory() {
-    DWORD len = GetCurrentDirectoryW(0, nullptr);
-    if (len == 0) return {};
-    std::wstring out(len, L'\0');
-    out.resize(GetCurrentDirectoryW(len, out.data()));
-    return out;
-}
-
-inline void AppendQuotedArg(std::wstring& out, const std::wstring& arg) {
-    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
-        out += arg;
-        return;
-    }
-    out += L'"';
-    for (size_t i = 0; i < arg.size(); ++i) {
-        size_t bs = 0;
-        while (i < arg.size() && arg[i] == L'\\') { ++bs; ++i; }
-        if (i == arg.size()) { out.append(bs * 2, L'\\'); break; }
-        out.append(arg[i] == L'"' ? bs * 2 + 1 : bs, L'\\');
-        out += arg[i];
-    }
-    out += L'"';
-}
-
-inline std::wstring BuildCommandLine(const std::wstring& executable,
-                                     const std::vector<std::wstring>& args) {
-    std::wstring cmd;
-    AppendQuotedArg(cmd, executable);
-    for (const std::wstring& a : args) {
-        cmd += L' ';
-        AppendQuotedArg(cmd, a);
-    }
-    return cmd;
-}
 
 enum class StdioMode {
     Capture,
@@ -60,12 +24,16 @@ struct ProcessResult {
     bool ok() const { return started && exitCode == 0; }
 };
 
+using ProcessId = std::intptr_t;
+
+void KillProcess(ProcessId process);
+
 class ProcessCanceller {
 public:
     void Cancel() {
         std::lock_guard lock(mu_);
         cancelled_ = true;
-        if (process_) TerminateProcess(process_, 1);
+        if (attached_) KillProcess(process_);
     }
 
     void Reset() {
@@ -78,21 +46,23 @@ public:
         return cancelled_;
     }
 
-    bool Attach(HANDLE process) {
+    bool Attach(ProcessId process) {
         std::lock_guard lock(mu_);
         if (cancelled_) return false;
-        process_ = process;
+        process_  = process;
+        attached_ = true;
         return true;
     }
 
     void Detach() {
         std::lock_guard lock(mu_);
-        process_ = nullptr;
+        attached_ = false;
     }
 
 private:
     std::mutex mu_;
-    HANDLE     process_   = nullptr;
+    ProcessId  process_   = 0;
+    bool       attached_  = false;
     bool       cancelled_ = false;
 };
 

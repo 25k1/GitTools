@@ -1,5 +1,7 @@
 #include "git/Process.hpp"
 
+#include "platform/win/CommandLine.hpp"
+
 #include <windows.h>
 
 #include <algorithm>
@@ -108,6 +110,10 @@ std::wstring FormatLastError(DWORD code) {
 
 }
 
+void KillProcess(ProcessId process) {
+    TerminateProcess(reinterpret_cast<HANDLE>(process), 1);
+}
+
 ProcessResult RunProcess(const std::wstring& executable,
                          const std::vector<std::wstring>& args,
                          const std::wstring& cwd,
@@ -182,7 +188,7 @@ ProcessResult RunProcess(const std::wstring& executable,
     }
     result.started = true;
 
-    if (cancel && !cancel->Attach(pi.hProcess)) {
+    if (cancel && !cancel->Attach(reinterpret_cast<ProcessId>(pi.hProcess))) {
         TerminateProcess(pi.hProcess, 1);
     }
 

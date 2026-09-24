@@ -1,7 +1,7 @@
 #include "cli/Detached.hpp"
 
-#include "cli/Util.hpp"
 #include "ui/App.hpp"
+#include "util/System.hpp"
 
 #include <string_view>
 
@@ -26,15 +26,15 @@ int SpawnDetachedSelf(const std::wstring& subcommand,
                       const std::vector<std::wstring>& args) {
     const std::wstring exe = ExecutablePath();
     if (exe.empty()) {
-        WriteErr(L"Failed to resolve gittools.exe path.");
+        WriteErr(L"Failed to resolve the gittools executable path.");
         return 1;
     }
 
     std::vector<std::wstring> full{subcommand, kDetachedFlag};
     full.insert(full.end(), args.begin(), args.end());
-    if (!SpawnDetachedProcess(CurrentDirectory(), BuildCommandLine(exe, full))) {
-        WriteErr(L"Failed to spawn detached gittools process (error " +
-                 std::to_wstring(GetLastError()) + L").");
+    if (!SpawnDetachedProcess(CurrentDirectory(), exe, full)) {
+        WriteErr(L"Failed to spawn detached gittools process (" +
+                 LastSystemError() + L").");
         return 1;
     }
     return 0;

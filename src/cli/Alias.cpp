@@ -1,7 +1,7 @@
 #include "cli/Alias.hpp"
 
-#include "cli/Util.hpp"
 #include "git/Git.hpp"
+#include "util/System.hpp"
 
 #include <algorithm>
 #include <string>
@@ -33,11 +33,11 @@ bool SetAlias(const std::wstring& name, const std::wstring& value) {
 }
 
 int RunInstallAlias() {
-    SetConsoleOutputCP(CP_UTF8);
+    UseUtf8Console();
 
     std::wstring exe = ExecutablePath();
     if (exe.empty()) {
-        WriteErr(L"Failed to resolve gittools.exe path.");
+        WriteErr(L"Failed to resolve the gittools executable path.");
         return 1;
     }
     std::ranges::replace(exe, L'\\', L'/');
@@ -59,7 +59,7 @@ int RunInstallAlias() {
 }
 
 int RunUninstallAlias() {
-    SetConsoleOutputCP(CP_UTF8);
+    UseUtf8Console();
     for (const AliasSpec& a : kAliases) {
         RunGit({L"config", L"--global", L"--unset", std::wstring(L"alias.") + a.name});
     }

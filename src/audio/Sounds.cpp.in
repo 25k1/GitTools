@@ -1,0 +1,23 @@
+#include "audio/Audio.hpp"
+
+#include <cstddef>
+
+namespace git_tools {
+
+namespace {
+
+@GITTOOLS_SOUND_DATA@
+template <size_t N>
+std::string_view Bytes(const unsigned char (&data)[N]) {
+    return {reinterpret_cast<const char*>(data), N};
+}
+
+}
+
+std::string_view SoundBytes(Sound sound) {
+    switch (sound) {
+@GITTOOLS_SOUND_CASES@    }
+    return {};
+}
+
+}

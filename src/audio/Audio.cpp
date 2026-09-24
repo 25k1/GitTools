@@ -1,5 +1,10 @@
 #define MA_ENABLE_ONLY_SPECIFIC_BACKENDS
+#ifdef _WIN32
 #define MA_ENABLE_WASAPI
+#else
+#define MA_ENABLE_PULSEAUDIO
+#define MA_ENABLE_ALSA
+#endif
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
 #define MA_NO_ENGINE
@@ -21,10 +26,9 @@
 #include "git/Config.hpp"
 #include "util/Encoding.hpp"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <condition_variable>
+#include <cstring>
 #include <cwchar>
 #include <deque>
 #include <functional>
@@ -39,13 +43,19 @@ namespace git_tools {
 
 namespace {
 
-std::wstring DeviceId(const ma_device_id& id) {
+std::wstring DeviceId(const ma_context& context, const ma_device_id& id) {
+#ifdef _WIN32
+    (void)context;
     return std::wstring(id.wasapi, wcsnlen(id.wasapi, std::size(id.wasapi)));
+#else
+    const char* name = context.backend == ma_backend_pulseaudio ? id.pulse
+                                                                : id.alsa;
+    return Utf8ToWide(std::string_view(name, strnlen(name, sizeof(id.alsa))));
+#endif
 }
 
 bool InitContext(ma_context& context) {
-    const ma_backend backends[] = {ma_backend_wasapi};
-    return ma_context_init(backends, 1, nullptr, &context) == MA_SUCCESS;
+    return ma_context_init(nullptr, 0, nullptr, &context) == MA_SUCCESS;
 }
 
 template <typename F>
@@ -57,14 +67,6 @@ void ForEachPlaybackDevice(ma_context& context, F&& fn) {
         return;
     }
     for (ma_uint32 i = 0; i < count; ++i) fn(infos[i]);
-}
-
-std::string_view ResourceBytes(const wchar_t* name) {
-    HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC   res    = FindResourceW(module, name, L"FLAC");
-    HGLOBAL data   = res ? LoadResource(module, res) : nullptr;
-    const auto* p  = static_cast<const char*>(data ? LockResource(data) : nullptr);
-    return p ? std::string_view(p, SizeofResource(module, res)) : std::string_view();
 }
 
 std::vector<float> Decode(std::string_view flac, ma_uint32 channels,
@@ -92,16 +94,14 @@ std::vector<float> Decode(std::string_view flac, ma_uint32 channels,
 
 class Player {
 public:
-    void Prepare(const std::wstring& device,
-                 const std::vector<std::wstring>& names) {
+    void Prepare(const std::wstring& device, const std::vector<Sound>& sounds) {
         if (!Open(device)) return;
-        for (const std::wstring& name : names) Clip(name);
+        for (Sound sound : sounds) Clip(sound);
     }
 
-    void Play(const std::wstring& device, const std::wstring& name,
-              float volume) {
+    void Play(const std::wstring& device, Sound sound, float volume) {
         if (!Open(device)) return;
-        const std::vector<float>& clip = Clip(name);
+        const std::vector<float>& clip = Clip(sound);
         if (clip.empty()) return;
 
         ma_device_set_master_volume(&device_, volume);
@@ -123,10 +123,10 @@ public:
     }
 
 private:
-    const std::vector<float>& Clip(const std::wstring& name) {
-        auto [clip, inserted] = clips_.try_emplace(name);
+    const std::vector<float>& Clip(Sound sound) {
+        auto [clip, inserted] = clips_.try_emplace(sound);
         if (inserted) {
-            clip->second = Decode(ResourceBytes(name.c_str()),
+            clip->second = Decode(SoundBytes(sound),
                                   device_.playback.channels, device_.sampleRate);
         }
         return clip->second;
@@ -141,7 +141,7 @@ private:
         bool found = false;
         if (!wanted.empty()) {
             ForEachPlaybackDevice(context_, [&](const ma_device_info& info) {
-                if (!found && DeviceId(info.id) == wanted) {
+                if (!found && DeviceId(context_, info.id) == wanted) {
                     id    = info.id;
                     found = true;
                 }
@@ -188,7 +188,7 @@ private:
     ma_device                                  device_{};
     bool                                       open_    = false;
     bool                                       failed_  = false;
-    std::map<std::wstring, std::vector<float>> clips_;
+    std::map<Sound, std::vector<float>>        clips_;
     std::mutex                                 mu_;
     const std::vector<float>*                  current_ = nullptr;
     size_t                                     cursor_  = 0;
@@ -244,27 +244,27 @@ std::vector<AudioDevice> ListAudioDevices() {
     if (!InitContext(context)) return {};
     std::vector<AudioDevice> devices;
     ForEachPlaybackDevice(context, [&](const ma_device_info& info) {
-        devices.push_back({DeviceId(info.id), Utf8ToWide(info.name)});
+        devices.push_back({DeviceId(context, info.id), Utf8ToWide(info.name)});
     });
     ma_context_uninit(&context);
     return devices;
 }
 
-void PrepareSounds(std::initializer_list<const wchar_t*> names) {
+void PrepareSounds(std::initializer_list<Sound> sounds) {
     if (SoundVolumePercent() == 0) return;
     std::wstring device = ConfigGet(kAudioDeviceKey);
-    std::vector<std::wstring> clips(names.begin(), names.end());
+    std::vector<Sound> clips(sounds.begin(), sounds.end());
     Audio().Post([device = std::move(device), clips = std::move(clips)] {
         Audio().player().Prepare(device, clips);
     });
 }
 
-void PlaySoundResource(const wchar_t* name) {
+void PlaySoundEffect(Sound sound) {
     const int volume = SoundVolumePercent();
     if (volume <= 0) return;
-    Audio().Post([device = ConfigGet(kAudioDeviceKey), clip = std::wstring(name),
+    Audio().Post([device = ConfigGet(kAudioDeviceKey), sound,
                   gain = static_cast<float>(volume) / 100.0f] {
-        Audio().player().Play(device, clip, gain);
+        Audio().player().Play(device, sound, gain);
     });
 }
 

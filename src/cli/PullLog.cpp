@@ -3,6 +3,7 @@
 #include "cli/Detached.hpp"
 #include "cli/Log.hpp"
 #include "git/Git.hpp"
+#include "util/System.hpp"
 
 namespace git_tools {
 
@@ -20,7 +21,7 @@ int RunPullLog(int argc, wchar_t** argv) {
                              RangeLogArgs(argv[3], argv[4]), LogErrors::Ignore);
     }
 
-    SetConsoleOutputCP(CP_UTF8);
+    UseUtf8Console();
     const std::wstring cwd    = CurrentDirectory();
     const std::wstring oldSha = HeadSha(cwd);
 

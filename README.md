@@ -18,23 +18,37 @@ TortoiseGit's shell extension started hanging and crashing Explorer on my machin
 
 ## Build
 
-For now build can be done only on windows. Requires  visual studio - *Tested on 2022 and 2026), cmake, clang, ninja.
+### Windows
+
+Requires Visual Studio (tested on 2022 and 2026) with the C++ Clang tools, CMake and Ninja.
 
 ```
 build.bat
 ```
 
-To stamp a version into the binary (`--version` and the file properties):
+### Linux
+
+Requires CMake, GCC 11+ or Clang 14+, pkg-config and the GTK 3 and zlib development packages. On Debian or Ubuntu:
+
+```
+sudo apt install build-essential cmake ninja-build pkg-config libgtk-3-dev zlib1g-dev
+./build.sh
+```
+
+To stamp a version into the binary (`--version`, and the file properties on Windows):
 
 ```
 build.bat Release clean -DGITTOOLS_VERSION=1.2.3
+./build.sh Release clean -DGITTOOLS_VERSION=1.2.3
 ```
 
 ## Install
 
-Download `gittools.exe` from the
+Download the binary from the
 [releases page](https://github.com/25k1/GitTools/releases/latest), or build it
-yourself as above. Put it somewhere stable, then:
+yourself as above: `gittools.exe` on Windows, `gittools-linux-x86_64` on Linux
+(rename it to `gittools`, `chmod +x` it and put it on your `PATH`, for example
+`~/.local/bin`; it needs GTK 3). Put it somewhere stable, then:
 
 ```
 gittools install-alias
@@ -60,9 +74,9 @@ Settings live in your global git config under `gittools`. File > Options and the
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `gittools.editor` | auto-detect | Editor command. `%1` is the file path (appended if absent), `%L` the line number. Notepad++ is found automatically and gets `-n<line>` |
+| `gittools.editor` | auto-detect | Editor command. `%1` is the file path (appended if absent), `%L` the line number. On Windows Notepad++ is found automatically and gets `-n<line>`; on Linux common editors (VS Code, Sublime, gedit, Kate, vim, emacs and others) get the line number automatically, and without a setting `xdg-open` is used |
 | `gittools.soundvolume` | `50` | Diff line sound volume, 0-100; `0` silences them |
-| `gittools.audiodevice` | default device | WASAPI output device id for the diff line sounds |
+| `gittools.audiodevice` | default device | Output device id for the diff line sounds (WASAPI on Windows, PulseAudio or ALSA on Linux) |
 | `gittools.unloadfarcommits` | `false` | Drop commits far from view in huge logs and reload them from git when needed |
 | `gittools.wraparound` | `false` | Whether find wraps past the end |
 | `gittools.debug` | `false` | Show the Output pane with the full git transcript |

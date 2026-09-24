@@ -1,6 +1,7 @@
 build/
 out/
 build-clang/
+build-linux/
 .vs/
 .vscode/
 CMakeUserPresets.json

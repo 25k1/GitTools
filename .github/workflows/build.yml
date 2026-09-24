@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   build:
+    name: Build (Windows)
     runs-on: windows-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -56,6 +57,14 @@ jobs:
           if (-not (Test-Path $clang)) { $clang = (Get-Command clang-cl).Source }
           & $clang --version | Select-Object -First 1
           "clang=$($clang -replace '\\', '/')" >> $env:GITHUB_OUTPUT
+
+      - name: Cache build directory
+        uses: actions/cache@v6
+        with:
+          path: build
+          key: build-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            build-${{ runner.os }}-
 
       - name: Configure
         shell: pwsh
@@ -102,8 +111,69 @@ jobs:
           archive: false
           if-no-files-found: error
 
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine version
+        id: version
+        run: |
+          version=''
+          if [ '${{ github.ref_type }}' = 'tag' ]; then
+            version='${{ github.ref_name }}'
+            version="${version#[vV]}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config libgtk-3-dev zlib1g-dev
+
+      - name: Cache build directory
+        uses: actions/cache@v6
+        with:
+          path: build
+          key: build-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            build-${{ runner.os }}-
+
+      - name: Configure
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          args=(-S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release)
+          if [ -n "$VERSION" ]; then args+=("-DGITTOOLS_VERSION=$VERSION"); fi
+          cmake "${args[@]}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Check version stamp
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          reported="$(./build/gittools --version)"
+          echo "gittools --version : $reported"
+          if [ -n "$VERSION" ] && [ "$reported" != "gittools $VERSION" ]; then
+            echo "--version printed '$reported', expected 'gittools $VERSION'" >&2
+            exit 1
+          fi
+
+      - name: Name artifact
+        run: cp build/gittools gittools-linux-x86_64
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: gittools-linux-x86_64
+          archive: false
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, build-linux]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -114,6 +184,11 @@ jobs:
           name: gittools.exe
           path: dist
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: gittools-linux-x86_64
+          path: dist
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,17 +196,21 @@ jobs:
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          asset=$(find dist -type f -name gittools.exe | head -n 1)
-          if [ -z "$asset" ]; then
-            echo "gittools.exe not found in the downloaded artifact" >&2
-            exit 1
-          fi
+          assets=()
+          for name in gittools.exe gittools-linux-x86_64; do
+            asset=$(find dist -type f -name "$name" | head -n 1)
+            if [ -z "$asset" ]; then
+              echo "$name not found in the downloaded artifacts" >&2
+              exit 1
+            fi
+            assets+=("$asset")
+          done
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$asset" --clobber
+            gh release upload "$TAG" "${assets[@]}" --clobber
           else
             flags=()
             case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
-            gh release create "$TAG" "$asset" \
+            gh release create "$TAG" "${assets[@]}" \
               --verify-tag \
               --title "gittools $VERSION" \
               --generate-notes \

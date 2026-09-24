@@ -22,9 +22,6 @@ namespace git_tools {
 
 namespace {
 
-constexpr wchar_t kInsertedSound[] = L"diffLineInserted";
-constexpr wchar_t kDeletedSound[]  = L"diffLineDeleted";
-
 struct DiffLocation {
     std::wstring path;
     int          line = 0;
@@ -184,12 +181,16 @@ DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
                    wxMAXIMIZE_BOX),
       params_(params) {
     find_.wrapAround = ConfigGetBool(kWrapAroundKey, false);
-    PrepareSounds({kInsertedSound, kDeletedSound});
+    PrepareSounds({Sound::LineInserted, Sound::LineDeleted});
 
     edit_ = CreateReadOnlyText(this, wxTE_DONTWRAP | wxHSCROLL | wxTE_PROCESS_TAB);
-    edit_->SetFont(wxFont(wxFontInfo(10.5).Family(wxFONTFAMILY_TELETYPE)
-                              .FaceName(L"Consolas")));
-    text_ = NormalizeCRLF(params_.diffText);
+    wxFontInfo font(10.5);
+    font.Family(wxFONTFAMILY_TELETYPE);
+#ifdef _WIN32
+    font.FaceName(L"Consolas");
+#endif
+    edit_->SetFont(wxFont(font));
+    text_ = NativeLineEnds(params_.diffText);
     SetReadOnlyText(edit_, text_);
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
@@ -230,9 +231,9 @@ void DiffDialog::CheckCaretLineAndPlay() {
     const long start = edit_->XYToPosition(0, line);
     if (start < 0 || static_cast<size_t>(start) >= text_.size()) return;
     if (text_[static_cast<size_t>(start)] == L'+') {
-        PlaySoundResource(kInsertedSound);
+        PlaySoundEffect(Sound::LineInserted);
     } else if (text_[static_cast<size_t>(start)] == L'-') {
-        PlaySoundResource(kDeletedSound);
+        PlaySoundEffect(Sound::LineDeleted);
     }
 }
 
