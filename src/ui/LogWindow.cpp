@@ -7,6 +7,7 @@
 #include "ui/App.hpp"
 #include "ui/Columns.hpp"
 #include "ui/DiffWindow.hpp"
+#include "ui/ListView.hpp"
 #include "ui/ToolFrame.hpp"
 #include "ui/Widgets.hpp"
 
@@ -112,7 +113,9 @@ protected:
 private:
     size_t CommitCount() const { return shown_; }
 
-    long SelectedIndex() const { return SelectedIndexIn(commits_, CommitCount()); }
+    long SelectedIndex() const {
+        return RowWithin(commits_->SelectedRow(), CommitCount());
+    }
 
     std::optional<Commit>          SelectedCommit() const;
     std::wstring                   SelectedSha() const;
@@ -145,8 +148,8 @@ private:
     void OpenDiffForSelection();
     void CopySelection(bool commits);
     void OnListKey(bool commits, wxKeyEvent& event);
-    void ShowCommitsContextMenu(const wxContextMenuEvent& event);
-    void ShowChangesContextMenu(const wxContextMenuEvent& event);
+    void ShowCommitsContextMenu(const wxPoint& at);
+    void ShowChangesContextMenu(const wxPoint& at);
 
     LogWindowParams params_;
     std::wstring    branch_;
@@ -178,7 +181,7 @@ LogFrame::LogFrame(LogWindowParams params)
 
     wxPanel* panel = Panel();
     AddLabel(L"&Commits");
-    commits_ = new VirtualList(panel, wxLC_SINGLE_SEL, kCommitColumns,
+    commits_ = new VirtualList(panel, false, kCommitColumns,
                                [this](long row, long column) {
         return CommitCell(row, column);
     });
@@ -187,7 +190,7 @@ LogFrame::LogFrame(LogWindowParams params)
     message_ = CreateReadOnlyText(panel);
     AddPane(message_, 18);
     AddLabel(L"C&hanges");
-    changes_ = new VirtualList(panel, 0, kChangeColumns,
+    changes_ = new VirtualList(panel, true, kChangeColumns,
                                [this](long row, long column) {
         return static_cast<size_t>(row) < detail_.changes.size()
                    ? ChangeCell(detail_.changes[static_cast<size_t>(row)], column)
@@ -196,36 +199,24 @@ LogFrame::LogFrame(LogWindowParams params)
     AddPane(changes_, 26);
     FinishLayout(changes_, 20);
 
-    commits_->Bind(wxEVT_LIST_ITEM_SELECTED, [this](wxListEvent& event) {
-        const long row = event.GetIndex();
-        if (row >= 0 && static_cast<size_t>(row) < CommitCount()) {
+    commits_->WhenSelected([this] {
+        if (const long row = SelectedIndex(); row >= 0) {
             RequestCommitsNear(row);
             ScheduleCommitLoad();
         }
     });
-    commits_->Bind(wxEVT_LIST_CACHE_HINT, [this](wxListEvent& event) {
-        RequestCommitsNear(event.GetCacheTo());
-    });
+    commits_->WhenRowsNeeded([this](long lastRow) { RequestCommitsNear(lastRow); });
     commits_->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) { OnListKey(true, event); });
     changes_->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) { OnListKey(false, event); });
-    changes_->Bind(wxEVT_LIST_ITEM_ACTIVATED, [this](wxListEvent&) {
-        OpenDiffForSelection();
-    });
-    commits_->Bind(wxEVT_CONTEXT_MENU, [this](wxContextMenuEvent& event) {
-        ShowCommitsContextMenu(event);
-    });
-    changes_->Bind(wxEVT_CONTEXT_MENU, [this](wxContextMenuEvent& event) {
-        ShowChangesContextMenu(event);
-    });
+    changes_->WhenActivated([this] { OpenDiffForSelection(); });
+    commits_->WhenContextMenu([this](const wxPoint& at) { ShowCommitsContextMenu(at); });
+    changes_->WhenContextMenu([this](const wxPoint& at) { ShowChangesContextMenu(at); });
     loadTimer_.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { ReloadSelectedCommit(); });
 
     if (params_.loader) AttachLoader();
-    commits_->SetItemCount(static_cast<long>(CommitCount()));
+    commits_->ResetRows(CommitCount());
     worker_ = std::thread(&LogFrame::WorkerLoop, this);
-    if (CommitCount() > 0) {
-        commits_->Select(0);
-        commits_->Focus(0);
-    }
+    if (CommitCount() > 0) commits_->SelectOnly(0);
     commits_->SetFocus();
 }
 
@@ -260,13 +251,13 @@ std::wstring LogFrame::SelectedSha() const {
 }
 
 const FileChange* LogFrame::SelectedChange() const {
-    const long i = SelectedIndexIn(changes_, detail_.changes.size());
+    const long i = RowWithin(changes_->SelectedRow(), detail_.changes.size());
     return (i < 0) ? nullptr : &detail_.changes[static_cast<size_t>(i)];
 }
 
 std::vector<const FileChange*> LogFrame::SelectedChanges() const {
     std::vector<const FileChange*> out;
-    for (long i : SelectedRows(changes_)) {
+    for (long i : changes_->SelectedRows()) {
         if (static_cast<size_t>(i) < detail_.changes.size()) {
             out.push_back(&detail_.changes[static_cast<size_t>(i)]);
         }
@@ -322,9 +313,7 @@ void LogFrame::ApplyCommitDetails(CommitDetails&& details) {
     detail_ = std::move(details);
     ShowCommitMessage();
 
-    changes_->DeleteAllItems();
-    changes_->SetItemCount(static_cast<long>(detail_.changes.size()));
-    changes_->Refresh();
+    changes_->ResetRows(detail_.changes.size());
 
     insertions_ = 0;
     deletions_  = 0;
@@ -332,12 +321,12 @@ void LogFrame::ApplyCommitDetails(CommitDetails&& details) {
         insertions_ += std::max(fc.insertions, 0);
         deletions_  += std::max(fc.deletions, 0);
     }
-    if (const long row = SelectedIndex(); row >= 0) commits_->RefreshItem(row);
+    if (const long row = SelectedIndex(); row >= 0) commits_->RefreshRow(row);
 }
 
 void LogFrame::ClearDetailPanes() {
-    changes_->DeleteAllItems();
     detail_.changes.clear();
+    changes_->ResetRows(0);
     ShowCommitMessage();
 }
 
@@ -390,7 +379,7 @@ void LogFrame::AppendLoadedCommits() {
     const size_t count = params_.loader->AcknowledgeCount();
     if (count == shown_) return;
     shown_ = count;
-    commits_->SetItemCount(static_cast<long>(shown_));
+    commits_->SetRowCount(shown_);
 }
 
 void LogFrame::RequestCommitsNear(long row) {
@@ -417,8 +406,7 @@ void LogFrame::ReloadCommitList() {
     }
     params_.loader = std::move(lr.loader);
     AttachLoader();
-    commits_->SetItemCount(static_cast<long>(shown_));
-    commits_->Refresh();
+    commits_->ResetRows(shown_);
 
     if (shown_ == 0) {
         ClearDetailPanes();
@@ -427,8 +415,7 @@ void LogFrame::ReloadCommitList() {
 
     const size_t found = params_.loader->IndexOf(keepSha);
     const long   row   = (found < shown_) ? static_cast<long>(found) : 0;
-    commits_->Select(row);
-    commits_->Focus(row);
+    commits_->SelectOnly(row);
     ReloadSelectedCommit();
 }
 
@@ -505,7 +492,7 @@ void LogFrame::OnListKey(bool commits, wxKeyEvent& event) {
     const int  key  = event.GetKeyCode();
 
     if (ctrl && key == 'A' && !commits) {
-        SelectAllRows(changes_);
+        changes_->SelectAllRows();
     } else if (key == WXK_F5 && event.GetModifiers() == wxMOD_NONE) {
         if (commits) ReloadCommitList();
         else         ReloadSelectedCommit();
@@ -516,9 +503,7 @@ void LogFrame::OnListKey(bool commits, wxKeyEvent& event) {
     }
 }
 
-void LogFrame::ShowCommitsContextMenu(const wxContextMenuEvent& event) {
-    wxPoint at;
-    if (!ContextMenuAnchor(commits_, event, at)) return;
+void LogFrame::ShowCommitsContextMenu(const wxPoint& at) {
     const std::optional<Commit> c = SelectedCommit();
     if (!c) return;
 
@@ -545,9 +530,7 @@ void LogFrame::ShowCommitsContextMenu(const wxContextMenuEvent& event) {
     }
 }
 
-void LogFrame::ShowChangesContextMenu(const wxContextMenuEvent& event) {
-    wxPoint at;
-    if (!ContextMenuAnchor(changes_, event, at)) return;
+void LogFrame::ShowChangesContextMenu(const wxPoint& at) {
     const FileChange* fc = SelectedChange();
     if (!fc) return;
 

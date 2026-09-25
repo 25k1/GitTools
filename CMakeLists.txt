@@ -290,7 +290,6 @@ set(GITTOOLS_WX_OFF
     wxUSE_CONSTRAINTS
     wxUSE_CRASHREPORT
     wxUSE_CREDENTIALDLG
-    wxUSE_DATAVIEWCTRL
     wxUSE_DATEPICKCTRL
     wxUSE_DATETIME
     wxUSE_DBGHELP
@@ -322,7 +321,6 @@ set(GITTOOLS_WX_OFF
     wxUSE_GAUGE
     wxUSE_GIF
     wxUSE_GRID
-    wxUSE_HEADERCTRL
     wxUSE_HELP
     wxUSE_HOTKEY
     wxUSE_HTML
@@ -429,13 +427,21 @@ set(GITTOOLS_WX_OFF
     wxUSE_ZIPSTREAM
     wxUSE_ZLIB
 )
+set(GITTOOLS_WX_ON)
 if(WIN32)
     list(APPEND GITTOOLS_WX_OFF
+        wxUSE_DATAVIEWCTRL
         wxUSE_GRAPHICS_CONTEXT
+        wxUSE_HEADERCTRL
         wxUSE_TEXTBUFFER
         wxUSE_TEXTFILE
     )
 else()
+    list(APPEND GITTOOLS_WX_ON
+        wxUSE_DATAVIEWCTRL
+        wxUSE_HEADERCTRL
+        wxUSE_NATIVE_DATAVIEWCTRL
+    )
     list(APPEND GITTOOLS_WX_OFF
         wxUSE_GTKPRINT
         wxUSE_LIBMSPACK
@@ -447,6 +453,9 @@ else()
 endif()
 foreach(wx_setting IN LISTS GITTOOLS_WX_OFF)
     set(${wx_setting} OFF CACHE BOOL gittools FORCE)
+endforeach()
+foreach(wx_setting IN LISTS GITTOOLS_WX_ON)
+    set(${wx_setting} ON CACHE BOOL gittools FORCE)
 endforeach()
 set(wxBUILD_MONOLITHIC ON CACHE BOOL gittools FORCE)
 set(wxBUILD_COMPATIBILITY NONE CACHE STRING gittools FORCE)
@@ -502,6 +511,7 @@ endif()
 target_sources(gittools PRIVATE
     ${GITTOOLS_PLATFORM_DIR}/Compression.cpp
     ${GITTOOLS_PLATFORM_DIR}/Encoding.cpp
+    ${GITTOOLS_PLATFORM_DIR}/ListView.cpp
     ${GITTOOLS_PLATFORM_DIR}/Process.cpp
     ${GITTOOLS_PLATFORM_DIR}/Shell.cpp
     ${GITTOOLS_PLATFORM_DIR}/System.cpp
@@ -537,7 +547,10 @@ if(WIN32)
 else()
     find_package(ZLIB REQUIRED)
     find_package(Threads REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
     target_link_libraries(gittools PRIVATE
+        PkgConfig::GTK3
         ZLIB::ZLIB
         Threads::Threads
         ${CMAKE_DL_LIBS}

@@ -4,8 +4,8 @@
 
 #include "ui/App.hpp"
 #include "ui/Columns.hpp"
+#include "ui/ListView.hpp"
 #include "ui/ToolFrame.hpp"
-#include "ui/Widgets.hpp"
 
 #include <wx/panel.h>
 
@@ -38,7 +38,7 @@ private:
 BranchFrame::BranchFrame(BranchWindowParams params)
     : ToolFrame(params.title, wxSize(960, 620)), params_(std::move(params)) {
     AddLabel(L"&Branches");
-    list_ = new VirtualList(Panel(), wxLC_SINGLE_SEL, kBranchColumns,
+    list_ = new VirtualList(Panel(), false, kBranchColumns,
                             [this](long row, long column) {
         return BranchCell(row, column);
     });
@@ -46,7 +46,7 @@ BranchFrame::BranchFrame(BranchWindowParams params)
     FinishLayout(list_, 30);
     ShowBranches();
 
-    list_->Bind(wxEVT_LIST_ITEM_ACTIVATED, [this](wxListEvent&) { OnCheckout(); });
+    list_->WhenActivated([this] { OnCheckout(); });
     list_->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) {
         if (event.GetKeyCode() == WXK_F5 && event.GetModifiers() == wxMOD_NONE) {
             Reload();
@@ -75,17 +75,14 @@ std::wstring BranchFrame::BranchCell(long row, long column) const {
 
 void BranchFrame::ShowBranches() {
     const std::vector<Branch>& branches = params_.branches;
-    list_->DeleteAllItems();
-    list_->SetItemCount(static_cast<long>(branches.size()));
-    list_->Refresh();
+    list_->ResetRows(branches.size());
     if (branches.empty()) return;
 
     const auto current = std::ranges::find_if(branches, &Branch::isCurrent);
     const long focus   = current == branches.end()
                              ? 0
                              : static_cast<long>(current - branches.begin());
-    list_->Select(focus);
-    list_->Focus(focus);
+    list_->SelectOnly(focus);
 }
 
 void BranchFrame::Reload() {
@@ -96,7 +93,7 @@ void BranchFrame::Reload() {
 }
 
 void BranchFrame::OnCheckout() {
-    const long idx = SelectedIndexIn(list_, params_.branches.size());
+    const long idx = RowWithin(list_->SelectedRow(), params_.branches.size());
     if (idx < 0) return;
     const Branch& b = params_.branches[static_cast<size_t>(idx)];
     if (b.isCurrent) return;

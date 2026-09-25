@@ -2,12 +2,11 @@
 
 #include "ui/App.hpp"
 #include "ui/Columns.hpp"
-#include "ui/Widgets.hpp"
+#include "ui/ListView.hpp"
 
 #include <wx/button.h>
 #include <wx/choice.h>
 #include <wx/dialog.h>
-#include <wx/listctrl.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 
@@ -34,7 +33,6 @@ private:
     void CaptureChecks();
     void RefreshRows(size_t from, size_t to);
     void MoveSelected(Shift shift);
-    bool ListHasFocus() const;
     void OnOk(wxCommandEvent& event);
     void OnListShortcut(wxKeyEvent& event);
 
@@ -43,7 +41,7 @@ private:
     std::vector<ColumnLayout>         layouts_;
     size_t                            current_ = 0;
     wxChoice*                         choice_  = nullptr;
-    wxListView*                       list_    = nullptr;
+    CheckList*                        list_    = nullptr;
 };
 
 ColumnsDialog::ColumnsDialog(wxWindow* owner)
@@ -58,11 +56,7 @@ ColumnsDialog::ColumnsDialog(wxWindow* owner)
     for (const ColumnSet* set : sets_) choice_->Append(set->title);
 
     auto* listLabel = new wxStaticText(this, wxID_ANY, L"&Columns:");
-    list_ = new wxListView(this, wxID_ANY, wxDefaultPosition,
-                           FromDIP(wxSize(260, 220)),
-                           wxLC_REPORT | wxLC_SINGLE_SEL | wxLC_NO_HEADER);
-    list_->EnableCheckBoxes();
-    list_->AppendColumn(L"Column");
+    list_ = new CheckList(this, FromDIP(wxSize(260, 220)));
 
     auto* up     = new wxButton(this, wxID_ANY, L"Move &up");
     auto* down   = new wxButton(this, wxID_ANY, L"Move &down");
@@ -90,12 +84,6 @@ ColumnsDialog::ColumnsDialog(wxWindow* owner)
                wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
     SetSizerAndFit(sizer);
     CentreOnParent();
-
-    list_->SetColumnWidth(0, list_->GetClientSize().x);
-    list_->Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
-        event.Skip();
-        list_->SetColumnWidth(0, list_->GetClientSize().x);
-    });
 
     choice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) {
         const int index = choice_->GetSelection();
@@ -130,19 +118,17 @@ void ColumnsDialog::ShowSet(size_t index) {
     current_ = index;
     const ColumnSet&    set    = *sets_[index];
     const ColumnLayout& layout = layouts_[index];
-    list_->DeleteAllItems();
-    for (size_t i = 0; i < layout.size(); ++i) {
-        const long row = static_cast<long>(i);
-        list_->InsertItem(row, set.columns[layout[i].id].name);
-        list_->CheckItem(row, layout[i].shown);
+    list_->ClearRows();
+    for (const ColumnState& c : layout) {
+        list_->AppendRow(set.columns[c.id].name, c.shown);
     }
-    if (!layout.empty()) SelectOnlyRow(list_, 0);
+    if (!layout.empty()) list_->SelectOnly(0);
 }
 
 void ColumnsDialog::CaptureChecks() {
     ColumnLayout& layout = layouts_[current_];
     for (size_t i = 0; i < layout.size(); ++i) {
-        layout[i].shown = list_->IsItemChecked(static_cast<long>(i));
+        layout[i].shown = list_->IsRowChecked(static_cast<long>(i));
     }
 }
 
@@ -150,15 +136,14 @@ void ColumnsDialog::RefreshRows(size_t from, size_t to) {
     const ColumnSet&    set    = *sets_[current_];
     const ColumnLayout& layout = layouts_[current_];
     for (size_t i = from; i <= to; ++i) {
-        const long row = static_cast<long>(i);
-        list_->SetItemText(row, set.columns[layout[i].id].name);
-        list_->CheckItem(row, layout[i].shown);
+        list_->SetRow(static_cast<long>(i), set.columns[layout[i].id].name,
+                      layout[i].shown);
     }
 }
 
 void ColumnsDialog::MoveSelected(Shift shift) {
     ColumnLayout& layout   = layouts_[current_];
-    const long    selected = list_->GetFirstSelected();
+    const long    selected = list_->SelectedRow();
     if (selected < 0 || static_cast<size_t>(selected) >= layout.size()) return;
 
     const size_t from = static_cast<size_t>(selected);
@@ -179,13 +164,7 @@ void ColumnsDialog::MoveSelected(Shift shift) {
     if (to < from) std::rotate(at(to), at(from), at(from + 1));
     else           std::rotate(at(from), at(from + 1), at(to + 1));
     RefreshRows(std::min(from, to), std::max(from, to));
-    SelectOnlyRow(list_, static_cast<long>(to));
-    list_->EnsureVisible(static_cast<long>(to));
-}
-
-bool ColumnsDialog::ListHasFocus() const {
-    const wxWindow* focus = FindFocus();
-    return focus && (focus == list_ || focus->GetParent() == list_);
+    list_->SelectOnly(static_cast<long>(to));
 }
 
 void ColumnsDialog::OnOk(wxCommandEvent& event) {
@@ -204,7 +183,7 @@ void ColumnsDialog::OnOk(wxCommandEvent& event) {
 }
 
 void ColumnsDialog::OnListShortcut(wxKeyEvent& event) {
-    if (event.GetModifiers() == wxMOD_CONTROL && ListHasFocus()) {
+    if (event.GetModifiers() == wxMOD_CONTROL && HasFocusWithin(list_)) {
         switch (event.GetKeyCode()) {
             case WXK_UP:   MoveSelected(Shift::Up);     return;
             case WXK_DOWN: MoveSelected(Shift::Down);   return;
