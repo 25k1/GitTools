@@ -193,6 +193,7 @@ private:
     long CaretLine() const;
     void ShowDiffText();
     void ToggleMarkers();
+    void GoHome();
     void CheckCaretLineAndPlay();
     const std::wstring& FoldedText();
     bool FindInDiff(bool forward);
@@ -285,6 +286,24 @@ void DiffDialog::ToggleMarkers() {
     const long target = start + std::clamp(column - delta, 0L, std::max(length, 0L));
     edit_->SetInsertionPoint(target);
     edit_->ShowPosition(target);
+}
+
+void DiffDialog::GoHome() {
+    long column = 0;
+    long line   = 0;
+    if (!edit_->PositionToXY(edit_->GetInsertionPoint(), &column, &line)) return;
+    const long start = edit_->XYToPosition(0, line);
+    if (start < 0) return;
+
+    size_t target = 0;
+    if (column == 0) {
+        const std::wstring text = edit_->GetLineText(line).ToStdWstring();
+        while (target < text.size() && (text[target] == L' ' || text[target] == L'\t')) {
+            ++target;
+        }
+    }
+    edit_->SetInsertionPoint(start + static_cast<long>(target));
+    edit_->ShowPosition(start + static_cast<long>(target));
 }
 
 void DiffDialog::CheckCaretLineAndPlay() {
@@ -380,6 +399,10 @@ void DiffDialog::OnKeyDown(wxKeyEvent& event) {
     }
     if (ctrl && shift && key == 'E') {
         OpenEditorAtCaret();
+        return;
+    }
+    if (key == WXK_HOME && modifiers == wxMOD_NONE) {
+        GoHome();
         return;
     }
     if (ctrl && !shift && key == 'I') {
