@@ -78,6 +78,9 @@ Settings live in your global git config under `gittools`. File > Options and the
 | `gittools.soundvolume` | `50` | Diff line sound volume, 0-100; `0` silences them |
 | `gittools.audiodevice` | default device | Output device id for the diff line sounds (WASAPI on Windows, PulseAudio or ALSA on Linux) |
 | `gittools.unloadfarcommits` | `false` | Drop commits far from view in huge logs and reload them from git when needed |
+| `gittools.commitcolumns` | `subject,author,date,insertions,deletions` | Column order of the commit list; a `-` prefix hides a column. Options > Configure columns edits it |
+| `gittools.changecolumns` | `name,state,insertions,deletions` | Same for the changed files list |
+| `gittools.branchcolumns` | `name,state,upstream,subject` | Same for the branch list |
 | `gittools.wraparound` | `false` | Whether find wraps past the end |
 | `gittools.debug` | `false` | Show the Output pane with the full git transcript |
 

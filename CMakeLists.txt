@@ -483,6 +483,8 @@ add_executable(gittools
     src/git/Transcript.cpp
     src/ui/App.cpp
     src/ui/BranchWindow.cpp
+    src/ui/Columns.cpp
+    src/ui/ColumnsDialog.cpp
     src/ui/DiffWindow.cpp
     src/ui/FindDialog.cpp
     src/ui/LogWindow.cpp

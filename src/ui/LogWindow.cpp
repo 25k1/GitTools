@@ -5,6 +5,7 @@
 #include "ui/Shell.hpp"
 
 #include "ui/App.hpp"
+#include "ui/Columns.hpp"
 #include "ui/DiffWindow.hpp"
 #include "ui/ToolFrame.hpp"
 #include "ui/Widgets.hpp"
@@ -35,8 +36,6 @@ constexpr int kCmdCopyHash     = wxID_HIGHEST + 111;
 constexpr int kCmdCopyMessage  = wxID_HIGHEST + 112;
 constexpr int kCmdCopyAuthor   = wxID_HIGHEST + 113;
 constexpr int kCmdCopyEmail    = wxID_HIGHEST + 114;
-
-constexpr long kColumnInsertions = 3;
 
 bool QueryMentions(const std::wstring& query, const std::wstring& name) {
     if (name.empty()) return false;
@@ -91,12 +90,12 @@ std::wstring ChangeName(const FileChange& fc) {
 
 std::wstring ChangeCell(const FileChange& fc, long column) {
     switch (column) {
-        case 0: return ChangeName(fc);
-        case 1: return std::wstring(1, fc.kindChar);
-        case 2: return FormatCount(fc.insertions,
-                                   fc.kind == FileChangeKind::Deleted);
-        case 3: return FormatCount(fc.deletions,
-                                   fc.kind == FileChangeKind::Added);
+        case kChangeName:  return ChangeName(fc);
+        case kChangeState: return std::wstring(1, fc.kindChar);
+        case kChangeInsertions:
+            return FormatCount(fc.insertions, fc.kind == FileChangeKind::Deleted);
+        case kChangeDeletions:
+            return FormatCount(fc.deletions, fc.kind == FileChangeKind::Added);
         default: return {};
     }
 }
@@ -179,7 +178,8 @@ LogFrame::LogFrame(LogWindowParams params)
 
     wxPanel* panel = Panel();
     AddLabel(L"&Commits");
-    commits_ = new VirtualList(panel, wxLC_SINGLE_SEL, [this](long row, long column) {
+    commits_ = new VirtualList(panel, wxLC_SINGLE_SEL, kCommitColumns,
+                               [this](long row, long column) {
         return CommitCell(row, column);
     });
     AddPane(commits_, 36);
@@ -187,27 +187,14 @@ LogFrame::LogFrame(LogWindowParams params)
     message_ = CreateReadOnlyText(panel);
     AddPane(message_, 18);
     AddLabel(L"C&hanges");
-    changes_ = new VirtualList(panel, 0, [this](long row, long column) {
+    changes_ = new VirtualList(panel, 0, kChangeColumns,
+                               [this](long row, long column) {
         return static_cast<size_t>(row) < detail_.changes.size()
                    ? ChangeCell(detail_.changes[static_cast<size_t>(row)], column)
                    : std::wstring();
     });
     AddPane(changes_, 26);
     FinishLayout(changes_, 20);
-
-    AddColumns(commits_, {
-        {L"Subject",    520},
-        {L"Author",     160},
-        {L"Date",       140},
-        {L"Insertions",  80, true},
-        {L"Deletions",   80, true},
-    });
-    AddColumns(changes_, {
-        {L"Name",       540},
-        {L"State",       60},
-        {L"Insertions",  80, true},
-        {L"Deletions",   80, true},
-    });
 
     commits_->Bind(wxEVT_LIST_ITEM_SELECTED, [this](wxListEvent& event) {
         const long row = event.GetIndex();
@@ -254,6 +241,8 @@ std::wstring LogFrame::StatusText() const {
 }
 
 void LogFrame::OnOptionsChanged() {
+    commits_->ApplyColumnLayout();
+    changes_->ApplyColumnLayout();
     if (params_.loader) {
         params_.loader->SetUnloadFar(ConfigGetBool(kUnloadFarCommitsKey, false));
     }
@@ -291,13 +280,13 @@ std::wstring LogFrame::CommitCell(long row, long column) const {
     }
     Commit c = params_.loader->At(static_cast<size_t>(row));
     switch (column) {
-        case 0: return std::move(c.subject);
-        case 1: return std::move(c.author);
-        case 2: return std::move(c.date);
-        case 3:
-        case 4:
+        case kCommitSubject: return std::move(c.subject);
+        case kCommitAuthor:  return std::move(c.author);
+        case kCommitDate:    return std::move(c.date);
+        case kCommitInsertions:
+        case kCommitDeletions:
             if (c.fullSha != detail_.sha || row != SelectedIndex()) return {};
-            return std::to_wstring(column == kColumnInsertions ? insertions_
+            return std::to_wstring(column == kCommitInsertions ? insertions_
                                                                : deletions_);
         default: return {};
     }

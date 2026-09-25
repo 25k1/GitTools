@@ -3,6 +3,7 @@
 #include "git/Git.hpp"
 
 #include "ui/App.hpp"
+#include "ui/Columns.hpp"
 #include "ui/ToolFrame.hpp"
 #include "ui/Widgets.hpp"
 
@@ -21,29 +22,28 @@ class BranchFrame : public ToolFrame {
 public:
     explicit BranchFrame(BranchWindowParams params);
 
+protected:
+    void OnOptionsChanged() override;
+
 private:
+    std::wstring BranchCell(long row, long column) const;
     void ShowBranches();
     void Reload();
     void OnCheckout();
 
     BranchWindowParams params_;
-    wxListView*        list_ = nullptr;
+    VirtualList*       list_ = nullptr;
 };
 
 BranchFrame::BranchFrame(BranchWindowParams params)
     : ToolFrame(params.title, wxSize(960, 620)), params_(std::move(params)) {
     AddLabel(L"&Branches");
-    list_ = new wxListView(Panel(), wxID_ANY, wxDefaultPosition, wxDefaultSize,
-                           wxLC_REPORT | wxLC_SINGLE_SEL);
+    list_ = new VirtualList(Panel(), wxLC_SINGLE_SEL, kBranchColumns,
+                            [this](long row, long column) {
+        return BranchCell(row, column);
+    });
     AddPane(list_, 70);
     FinishLayout(list_, 30);
-
-    AddColumns(list_, {
-        {L"Name",     360},
-        {L"State",     50},
-        {L"Upstream", 200},
-        {L"Subject",  400},
-    });
     ShowBranches();
 
     list_->Bind(wxEVT_LIST_ITEM_ACTIVATED, [this](wxListEvent&) { OnCheckout(); });
@@ -57,16 +57,27 @@ BranchFrame::BranchFrame(BranchWindowParams params)
     list_->SetFocus();
 }
 
+void BranchFrame::OnOptionsChanged() {
+    list_->ApplyColumnLayout();
+}
+
+std::wstring BranchFrame::BranchCell(long row, long column) const {
+    if (row < 0 || static_cast<size_t>(row) >= params_.branches.size()) return {};
+    const Branch& b = params_.branches[static_cast<size_t>(row)];
+    switch (column) {
+        case kBranchName:     return b.name;
+        case kBranchState:    return b.isCurrent ? L"*" : L"";
+        case kBranchUpstream: return b.upstream;
+        case kBranchSubject:  return b.subject;
+        default: return {};
+    }
+}
+
 void BranchFrame::ShowBranches() {
     const std::vector<Branch>& branches = params_.branches;
     list_->DeleteAllItems();
-    long row = 0;
-    for (const Branch& b : branches) {
-        const long item = list_->InsertItem(row++, b.name);
-        list_->SetItem(item, 1, b.isCurrent ? L"*" : L"");
-        list_->SetItem(item, 2, b.upstream);
-        list_->SetItem(item, 3, b.subject);
-    }
+    list_->SetItemCount(static_cast<long>(branches.size()));
+    list_->Refresh();
     if (branches.empty()) return;
 
     const auto current = std::ranges::find_if(branches, &Branch::isCurrent);

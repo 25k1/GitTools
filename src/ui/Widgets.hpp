@@ -12,26 +12,26 @@ class wxContextMenuEvent;
 
 namespace git_tools {
 
+struct ColumnSet;
+
 class VirtualList : public wxListView {
 public:
     using TextFn = std::function<std::wstring(long row, long column)>;
 
-    VirtualList(wxWindow* parent, long style, TextFn text);
+    VirtualList(wxWindow* parent, long style, const ColumnSet& columns,
+                TextFn text);
+
+    void ApplyColumnLayout();
 
 protected:
     wxString OnGetItemText(long item, long column) const override;
 
 private:
-    TextFn text_;
+    const ColumnSet*    columns_;
+    TextFn              text_;
+    std::vector<size_t> shown_;
+    std::vector<int>    widths_;
 };
-
-struct ListColumn {
-    const wchar_t* name;
-    int            width;
-    bool           right = false;
-};
-
-void AddColumns(wxListCtrl* list, std::initializer_list<ListColumn> columns);
 
 std::vector<long> SelectedRows(const wxListView* list);
 

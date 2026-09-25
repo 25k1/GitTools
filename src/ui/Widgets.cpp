@@ -1,5 +1,7 @@
 #include "ui/Widgets.hpp"
 
+#include "ui/Columns.hpp"
+
 #include <wx/event.h>
 #include <wx/menu.h>
 
@@ -7,21 +9,51 @@
 
 namespace git_tools {
 
-VirtualList::VirtualList(wxWindow* parent, long style, TextFn text)
+VirtualList::VirtualList(wxWindow* parent, long style, const ColumnSet& columns,
+                         TextFn text)
     : wxListView(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                  wxLC_REPORT | wxLC_VIRTUAL | style),
-      text_(std::move(text)) {}
-
-wxString VirtualList::OnGetItemText(long item, long column) const {
-    return text_ ? wxString(text_(item, column)) : wxString();
+      columns_(&columns),
+      text_(std::move(text)) {
+    for (const ColumnDef& def : columns_->columns) {
+        widths_.push_back(FromDIP(def.width));
+    }
+    ApplyColumnLayout();
 }
 
-void AddColumns(wxListCtrl* list, std::initializer_list<ListColumn> columns) {
-    for (const ListColumn& c : columns) {
-        list->AppendColumn(c.name,
-                           c.right ? wxLIST_FORMAT_RIGHT : wxLIST_FORMAT_LEFT,
-                           list->FromDIP(c.width));
+void VirtualList::ApplyColumnLayout() {
+    for (size_t i = 0; i < shown_.size(); ++i) {
+        widths_[shown_[i]] = GetColumnWidth(static_cast<int>(i));
     }
+    shown_.clear();
+    for (const ColumnState& c : LoadColumnLayout(*columns_)) {
+        if (c.shown) shown_.push_back(c.id);
+    }
+
+    const int existing = GetColumnCount();
+    for (int i = existing - 1; i >= static_cast<int>(shown_.size()); --i) {
+        DeleteColumn(i);
+    }
+    for (size_t i = 0; i < shown_.size(); ++i) {
+        const ColumnDef& def = columns_->columns[shown_[i]];
+        wxListItem column;
+        column.SetText(def.name);
+        column.SetAlign(def.right ? wxLIST_FORMAT_RIGHT : wxLIST_FORMAT_LEFT);
+        column.SetWidth(widths_[shown_[i]]);
+        if (static_cast<int>(i) < existing) {
+            SetColumn(static_cast<int>(i), column);
+        } else {
+            InsertColumn(static_cast<long>(i), column);
+        }
+    }
+    Refresh();
+}
+
+wxString VirtualList::OnGetItemText(long item, long column) const {
+    if (!text_ || column < 0 || static_cast<size_t>(column) >= shown_.size()) {
+        return wxString();
+    }
+    return text_(item, static_cast<long>(shown_[static_cast<size_t>(column)]));
 }
 
 std::vector<long> SelectedRows(const wxListView* list) {

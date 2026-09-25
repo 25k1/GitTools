@@ -4,6 +4,8 @@
 
 #include "ui/OptionsDialog.hpp"
 
+#include "ui/ColumnsDialog.hpp"
+
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/choice.h>
@@ -55,6 +57,12 @@ bool ShowOptionsDialog(wxWindow* owner) {
         L"(reloaded from git when needed)");
     unloadFar->SetValue(ConfigGetBool(kUnloadFarCommitsKey, false));
 
+    bool columnsChanged = false;
+    auto* columns = new wxButton(&dialog, wxID_ANY, L"Configure &columns...");
+    columns->Bind(wxEVT_BUTTON, [&dialog, &columnsChanged](wxCommandEvent&) {
+        if (ShowColumnsDialog(&dialog)) columnsChanged = true;
+    });
+
     size_t selectedDevice = 0;
     const std::vector<AudioDevice> devices = AudioDeviceChoices(selectedDevice);
     auto* deviceLabel = new wxStaticText(&dialog, wxID_ANY, L"Output &device:");
@@ -97,6 +105,7 @@ bool ShowOptionsDialog(wxWindow* owner) {
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(grid, 0, wxEXPAND | wxALL, gap);
     sizer->Add(unloadFar, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
+    sizer->Add(columns, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(audio, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
                wxEXPAND | wxALL, gap);
@@ -109,7 +118,7 @@ bool ShowOptionsDialog(wxWindow* owner) {
     editor->SetFocus();
     editor->SelectAll();
 
-    if (dialog.ShowModal() != wxID_OK) return false;
+    if (dialog.ShowModal() != wxID_OK) return columnsChanged;
 
     const int choice = device->GetSelection();
     ConfigSet(kEditorKey, editor->GetValue().ToStdWstring());
