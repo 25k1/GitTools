@@ -1,14 +1,12 @@
 #include "util/System.hpp"
 
-#include "util/Encoding.hpp"
+#include "platform/posix/Fd.hpp"
 
-#include <cerrno>
+#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 namespace git_tools {
 
@@ -17,14 +15,7 @@ namespace {
 thread_local int lastError = 0;
 
 void WriteLine(int fd, const std::wstring& s) {
-    const std::string bytes = WideToUtf8(s) + "\n";
-    size_t offset = 0;
-    while (offset < bytes.size()) {
-        const ssize_t n = write(fd, bytes.data() + offset, bytes.size() - offset);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return;
-        offset += static_cast<size_t>(n);
-    }
+    WriteAll(fd, WideToUtf8(s) + "\n");
 }
 
 void RedirectToNull() {
@@ -58,12 +49,7 @@ std::wstring CurrentDirectory() {
 bool SpawnDetachedProcess(const std::wstring& cwd,
                           const std::wstring& executable,
                           const std::vector<std::wstring>& args) {
-    std::vector<std::string> argStore;
-    argStore.push_back(WideToUtf8(executable));
-    for (const std::wstring& a : args) argStore.push_back(WideToUtf8(a));
-    std::vector<char*> argv;
-    for (std::string& a : argStore) argv.push_back(a.data());
-    argv.push_back(nullptr);
+    ArgvList          argv(executable, args);
     const std::string dir = WideToUtf8(cwd);
 
     int status[2];
@@ -86,42 +72,49 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
         if (child == 0) {
             RedirectToNull();
             if (dir.empty() || chdir(dir.c_str()) == 0) {
-                execvp(argv[0], argv.data());
+                execvp(argv.file(), argv.get());
             }
         }
-        const int err = errno;
-        (void)!write(status[1], &err, sizeof(err));
-        _exit(127);
+        ReportExecFailure(status[1]);
     }
 
     close(status[1]);
     while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
-    int err = 0;
-    ssize_t got = 0;
-    do {
-        got = read(status[0], &err, sizeof(err));
-    } while (got < 0 && errno == EINTR);
+    int        err    = 0;
+    const bool failed = ReadExecFailure(status[0], err);
     close(status[0]);
-    if (got == static_cast<ssize_t>(sizeof(err))) {
-        lastError = err;
-        return false;
-    }
-    return true;
+    if (failed) lastError = err;
+    return !failed;
 }
 
 std::wstring LastSystemError() {
-    return Utf8ToWide(std::strerror(lastError));
+    return ErrorText(lastError);
 }
 
 bool ReadStandardInput(std::string& bytes) {
     if (isatty(0)) return false;
-    char buf[65536];
-    for (;;) {
-        const ssize_t n = read(0, buf, sizeof(buf));
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return true;
-        bytes.append(buf, static_cast<size_t>(n));
+    ReadAll(0, [&](std::string_view chunk) { bytes.append(chunk); });
+    return true;
+}
+
+std::string ReadFileBytes(const std::wstring& path) {
+    constexpr long kMaxBytes = 32L * 1024 * 1024;
+
+    std::FILE* file = std::fopen(WideToUtf8(path).c_str(), "rb");
+    if (!file) return {};
+
+    std::string out;
+    if (std::fseek(file, 0, SEEK_END) == 0) {
+        const long size = std::ftell(file);
+        if (size > 0 && size <= kMaxBytes && std::fseek(file, 0, SEEK_SET) == 0) {
+            out.resize(static_cast<size_t>(size));
+            out.resize(std::fread(out.data(), 1, out.size(), file));
+        }
     }
+    std::fclose(file);
+
+    if (out.starts_with("\xEF\xBB\xBF")) out.erase(0, 3);
+    return out;
 }
 
 std::wstring WriteTempFile(std::string_view bytes) {
@@ -132,19 +125,12 @@ std::wstring WriteTempFile(std::string_view bytes) {
         lastError = errno;
         return {};
     }
-    for (size_t offset = 0; offset < bytes.size();) {
-        const ssize_t n = write(fd, bytes.data() + offset, bytes.size() - offset);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) {
-            lastError = n < 0 ? errno : EIO;
-            close(fd);
-            unlink(path.c_str());
-            return {};
-        }
-        offset += static_cast<size_t>(n);
-    }
+    const bool ok = WriteAll(fd, bytes);
+    if (!ok) lastError = errno ? errno : EIO;
     close(fd);
-    return Utf8ToWide(path);
+    if (ok) return Utf8ToWide(path);
+    unlink(path.c_str());
+    return {};
 }
 
 void RemoveFile(const std::wstring& path) {

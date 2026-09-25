@@ -6,6 +6,7 @@
 
 #include "ui/App.hpp"
 #include "ui/ColumnsDialog.hpp"
+#include "ui/Widgets.hpp"
 
 #include <wx/button.h>
 #include <wx/checkbox.h>
@@ -52,22 +53,20 @@ bool ShowOptionsDialog(wxWindow* owner) {
         L"path (appended if absent), %L by the line number. Notepad++ gets "
         L"-n<line> automatically.");
 
-    auto* unloadFar = new wxCheckBox(
-        &dialog, wxID_ANY,
-        L"&Unload commits far from view to save memory "
-        L"(reloaded from git when needed)");
-    unloadFar->SetValue(ConfigGetBool(kUnloadFarCommitsKey, false));
-
-    auto* diffMarkers = new wxCheckBox(
-        &dialog, wxID_ANY,
-        L"Show + and - &indicators in the diff viewer (Ctrl+I)");
-    diffMarkers->SetValue(ConfigGetBool(kDiffMarkersKey, true));
-
+    const auto check = [&dialog](const wchar_t* label, bool value) {
+        auto* box = new wxCheckBox(&dialog, wxID_ANY, label);
+        box->SetValue(value);
+        return box;
+    };
+    auto* unloadFar = check(L"&Unload commits far from view to save memory "
+                            L"(reloaded from git when needed)",
+                            ConfigGetBool(kUnloadFarCommitsKey, false));
+    auto* diffMarkers = check(L"Show + and - &indicators in the diff viewer (Ctrl+I)",
+                              ConfigGetBool(kDiffMarkersKey, true));
     const bool diffViewerWas = DiffViewerInstalled();
-    auto* diffViewer = new wxCheckBox(
-        &dialog, wxID_ANY,
-        L"Open git diff output in &gittools (sets pager.diff in the global git config)");
-    diffViewer->SetValue(diffViewerWas);
+    auto* diffViewer = check(L"Open git diff output in &gittools "
+                             L"(sets pager.diff in the global git config)",
+                             diffViewerWas);
 
     bool columnsChanged = false;
     auto* columns = new wxButton(&dialog, wxID_ANY, L"Configure &columns...");
@@ -116,18 +115,14 @@ bool ShowOptionsDialog(wxWindow* owner) {
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(grid, 0, wxEXPAND | wxALL, gap);
-    sizer->Add(unloadFar, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
-    sizer->Add(diffMarkers, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
-    sizer->Add(diffViewer, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
-    sizer->Add(columns, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
+    for (wxWindow* option : std::initializer_list<wxWindow*>{
+             unloadFar, diffMarkers, diffViewer, columns}) {
+        sizer->Add(option, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
+    }
     sizer->Add(audio, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
-    sizer->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
-               wxEXPAND | wxALL, gap);
-    dialog.SetSizer(sizer);
     editor->SetMinSize(wxSize(dialog.FromDIP(420), -1));
     editorHelp->Wrap(dialog.FromDIP(420));
-    sizer->Fit(&dialog);
-    dialog.CentreOnParent();
+    FinishDialog(dialog, sizer, gap);
 
     editor->SetFocus();
     editor->SelectAll();

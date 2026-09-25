@@ -28,6 +28,8 @@ inline std::wstring TrimmedOutput(const ProcessResult& r) {
     return r.ok() ? Utf8ToWide(TrimRight(r.stdoutText)) : std::wstring();
 }
 
+std::wstring GitFailure(const std::wstring& what, const ProcessResult& r);
+
 struct RepoContext {
     std::wstring cwd;
     std::wstring root;

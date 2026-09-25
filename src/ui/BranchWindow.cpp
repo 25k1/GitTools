@@ -6,6 +6,7 @@
 #include "ui/Columns.hpp"
 #include "ui/ListView.hpp"
 #include "ui/ToolFrame.hpp"
+#include "ui/Widgets.hpp"
 
 #include <wx/panel.h>
 
@@ -48,7 +49,7 @@ BranchFrame::BranchFrame(BranchWindowParams params)
 
     list_->WhenActivated([this] { OnCheckout(); });
     list_->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) {
-        if (event.GetKeyCode() == WXK_F5 && event.GetModifiers() == wxMOD_NONE) {
+        if (IsKey(event, WXK_F5)) {
             Reload();
             return;
         }
@@ -103,17 +104,9 @@ void BranchFrame::OnCheckout() {
         b.isRemote && slash != std::wstring::npos) {
         target.erase(0, slash + 1);
     }
-    ProcessResult r = CheckoutBranch(target, params_.cwd);
-    if (!r.started) {
-        ShowError(this, L"Checkout failed",
-                  L"Failed to launch git:\n\n" + r.errorMessage);
-        return;
-    }
-    if (r.exitCode != 0) {
-        ShowError(this, L"Checkout failed",
-                  L"git checkout " + b.name + L" failed:\n\n" +
-                      Utf8ToWide(r.stderrText.empty() ? r.stdoutText
-                                                      : r.stderrText));
+    const ProcessResult r = CheckoutBranch(target, params_.cwd);
+    if (!r.ok()) {
+        ShowError(this, L"Checkout failed", GitFailure(L"git checkout " + target, r));
         return;
     }
     Reload();

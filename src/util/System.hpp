@@ -18,6 +18,8 @@ std::wstring LastSystemError();
 
 bool ReadStandardInput(std::string& bytes);
 
+std::string ReadFileBytes(const std::wstring& path);
+
 std::wstring WriteTempFile(std::string_view bytes);
 
 void RemoveFile(const std::wstring& path);

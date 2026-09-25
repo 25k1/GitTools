@@ -3,7 +3,6 @@
 #include "cli/Detached.hpp"
 #include "git/Config.hpp"
 #include "git/Git.hpp"
-#include "ui/Shell.hpp"
 #include "util/System.hpp"
 
 #include "ui/App.hpp"
@@ -15,8 +14,6 @@
 namespace git_tools {
 
 namespace {
-
-constexpr wchar_t kSubcommand[] = L"diff-view";
 
 bool IsEscapeParameter(char c) {
     const unsigned char u = static_cast<unsigned char>(c);
@@ -73,7 +70,7 @@ int RunDiffView(int argc, wchar_t** argv) {
         WriteErr(L"Failed to write a temporary file (" + LastSystemError() + L").");
         return 1;
     }
-    const int code = SpawnDetachedSelf(kSubcommand, {path});
+    const int code = SpawnDetachedSelf(kDiffViewCommand, {path});
     if (code != 0) RemoveFile(path);
     return code;
 }

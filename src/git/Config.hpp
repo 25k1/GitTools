@@ -1,7 +1,10 @@
 #pragma once
 
+#include "git/Process.hpp"
+
 #include <algorithm>
 #include <string>
+#include <string_view>
 
 namespace git_tools {
 
@@ -13,6 +16,8 @@ inline constexpr wchar_t kUnloadFarCommitsKey[] = L"unloadfarcommits";
 inline constexpr wchar_t kAudioDeviceKey[]      = L"audiodevice";
 inline constexpr wchar_t kDiffMarkersKey[]      = L"diffmarkers";
 
+inline constexpr wchar_t kDiffViewCommand[] = L"diff-view";
+
 std::wstring ConfigGet(const std::wstring& key,
                        const std::wstring& fallback = L"");
 
@@ -23,6 +28,14 @@ int ConfigGetInt(const std::wstring& key, int fallback);
 void ConfigSet(const std::wstring& key, const std::wstring& value);
 
 void ConfigSetBool(const std::wstring& key, bool value);
+
+std::wstring GlobalConfigGet(const std::wstring& key);
+
+ProcessResult GlobalConfigSet(const std::wstring& key, const std::wstring& value);
+
+bool GlobalConfigUnset(const std::wstring& key);
+
+std::wstring SelfCommand(std::wstring_view subcommand);
 
 bool DiffViewerInstalled();
 

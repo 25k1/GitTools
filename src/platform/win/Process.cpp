@@ -1,10 +1,8 @@
 #include "git/Process.hpp"
 
 #include "platform/win/CommandLine.hpp"
+#include "platform/win/Handles.hpp"
 
-#include <windows.h>
-
-#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -29,20 +27,6 @@ bool CreateInheritablePipe(PipePair& p, bool childReads = false) {
     HANDLE parentEnd = childReads ? p.writeEnd : p.readEnd;
     if (!SetHandleInformation(parentEnd, HANDLE_FLAG_INHERIT, 0)) return false;
     return true;
-}
-
-void WriteAll(HANDLE h, const std::string& data) {
-    size_t offset = 0;
-    while (offset < data.size()) {
-        const DWORD chunk = static_cast<DWORD>(
-            std::min<size_t>(data.size() - offset, 1 << 20));
-        DWORD written = 0;
-        if (!WriteFile(h, data.data() + offset, chunk, &written, nullptr) ||
-            written == 0) {
-            return;
-        }
-        offset += written;
-    }
 }
 
 struct InheritList {
@@ -75,37 +59,10 @@ struct InheritList {
 };
 
 void DrainPipe(HANDLE h, std::string& out, const OutputSink& sink = {}) {
-    char buf[16384];
-    DWORD bytesRead = 0;
-    for (;;) {
-        BOOL ok = ReadFile(h, buf, sizeof(buf), &bytesRead, nullptr);
-        if (!ok || bytesRead == 0) break;
-        if (sink) sink(std::string_view(buf, bytesRead));
-        else      out.append(buf, bytesRead);
-    }
-}
-
-std::wstring FormatLastError(DWORD code) {
-    LPWSTR msg = nullptr;
-    DWORD n = FormatMessageW(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-            FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr, code, 0,
-        reinterpret_cast<LPWSTR>(&msg), 0, nullptr);
-    std::wstring result;
-    if (n > 0 && msg) {
-        result.assign(msg, n);
-        while (!result.empty() &&
-               (result.back() == L'\r' || result.back() == L'\n')) {
-            result.pop_back();
-        }
-    } else {
-        wchar_t buf[64];
-        wsprintfW(buf, L"error %lu", code);
-        result = buf;
-    }
-    if (msg) LocalFree(msg);
-    return result;
+    ReadAll(h, [&](std::string_view bytes) {
+        if (sink) sink(bytes);
+        else      out.append(bytes);
+    });
 }
 
 }

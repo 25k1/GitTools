@@ -9,7 +9,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 #include <iterator>
 #include <string_view>
@@ -146,26 +145,6 @@ bool PathExists(const std::wstring& path) {
 }
 
 void ResetEditorCache() { EditorCache() = EditorCacheData(); }
-
-std::string ReadFileBytes(const std::wstring& path) {
-    constexpr long kMaxBytes = 32L * 1024 * 1024;
-
-    std::FILE* file = std::fopen(WideToUtf8(path).c_str(), "rb");
-    if (!file) return {};
-
-    std::string out;
-    if (std::fseek(file, 0, SEEK_END) == 0) {
-        const long size = std::ftell(file);
-        if (size > 0 && size <= kMaxBytes && std::fseek(file, 0, SEEK_SET) == 0) {
-            out.resize(static_cast<size_t>(size));
-            out.resize(std::fread(out.data(), 1, out.size(), file));
-        }
-    }
-    std::fclose(file);
-
-    if (out.starts_with("\xEF\xBB\xBF")) out.erase(0, 3);
-    return out;
-}
 
 std::wstring FindEditor() {
     EditorCacheData& cache = EditorCache();

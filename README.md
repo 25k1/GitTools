@@ -16,7 +16,7 @@ TortoiseGit's shell extension started hanging and crashing Explorer on my machin
 - **Diff viewer** - select one or more files to read their diffs together. Find with `Ctrl+F`, and `Ctrl+Shift+E` jumps into your editor at the matching line of the real file. Added and removed lines play a sound as you arrow through them, and `Ctrl+I` hides the `+`/`-` markers while keeping the sounds.
 - **`git diff`** - optionally opens in the diff viewer instead of the terminal pager (`gittools install-diff`, or File > Options).
 - **Status bar** - shows the running git command and whether it succeeded, failed or was cancelled.
-fghfjg
+
 ## Build
 
 ### Windows

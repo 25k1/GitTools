@@ -71,6 +71,14 @@ ColumnLayout LoadColumnLayout(const ColumnSet& set) {
     return layout;
 }
 
+std::vector<size_t> VisibleColumns(const ColumnSet& set) {
+    std::vector<size_t> ids;
+    for (const ColumnState& c : LoadColumnLayout(set)) {
+        if (c.shown) ids.push_back(c.id);
+    }
+    return ids;
+}
+
 void SaveColumnLayout(const ColumnSet& set, const ColumnLayout& layout) {
     std::vector<std::wstring> tokens;
     for (const ColumnState& c : layout) {

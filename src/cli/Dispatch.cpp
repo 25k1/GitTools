@@ -7,6 +7,7 @@
 #include "cli/DiffView.hpp"
 #include "cli/Log.hpp"
 #include "cli/PullLog.hpp"
+#include "git/Config.hpp"
 #include "git/Git.hpp"
 #include "ui/App.hpp"
 #include "util/System.hpp"
@@ -20,11 +21,11 @@ namespace git_tools {
 
 namespace {
 
-int RunTestGit(int, wchar_t**) {
+int RunTestGit() {
     ProcessResult r = RunGit({L"--version"});
     std::wstring text;
     if (!r.started) {
-        text = L"Failed to launch git:\n\n" + r.errorMessage;
+        text = GitFailure(L"git --version", r);
     } else {
         text = L"git --version (exit " + std::to_wstring(r.exitCode) +
                L")\n\nstdout:\n" + Utf8ToWide(r.stdoutText);
@@ -39,7 +40,7 @@ int RunTestGit(int, wchar_t**) {
     return r.ok() ? 0 : 1;
 }
 
-int RunVersion(int, wchar_t**) {
+int RunVersion() {
     UseUtf8Console();
     WriteOut(std::wstring(L"gittools ") + kVersion);
     return 0;
@@ -65,6 +66,11 @@ int RunUsage() {
     });
 }
 
+template <int (*Run)()>
+int WithoutArgs(int, wchar_t**) {
+    return Run();
+}
+
 enum class Console {
     Free,
     Keep,
@@ -78,22 +84,18 @@ struct Command {
 };
 
 constexpr Command kCommands[] = {
-    {L"--version",       RunVersion,  Console::Keep},
-    {L"-v",              RunVersion,  Console::Keep},
-    {L"test-git",        RunTestGit,  Console::Free},
-    {L"pull-log",        RunPullLog,  Console::KeepUntilDetached},
-    {L"log",             RunLog,      Console::KeepUntilDetached},
-    {L"log-range",       RunLogRange, Console::Free},
-    {L"branch",          RunBranch,   Console::KeepUntilDetached},
-    {L"diff-view",       RunDiffView, Console::KeepUntilDetached},
-    {L"install-alias",   [](int, wchar_t**) { return RunInstallAlias(); },
-                         Console::Keep},
-    {L"uninstall-alias", [](int, wchar_t**) { return RunUninstallAlias(); },
-                         Console::Keep},
-    {L"install-diff",    [](int, wchar_t**) { return RunInstallDiffViewer(); },
-                         Console::Keep},
-    {L"uninstall-diff",  [](int, wchar_t**) { return RunUninstallDiffViewer(); },
-                         Console::Keep},
+    {L"--version",       WithoutArgs<RunVersion>,             Console::Keep},
+    {L"-v",              WithoutArgs<RunVersion>,             Console::Keep},
+    {L"test-git",        WithoutArgs<RunTestGit>,             Console::Free},
+    {L"pull-log",        RunPullLog,                          Console::KeepUntilDetached},
+    {L"log",             RunLog,                              Console::KeepUntilDetached},
+    {L"log-range",       RunLogRange,                         Console::Free},
+    {L"branch",          RunBranch,                           Console::KeepUntilDetached},
+    {kDiffViewCommand,   RunDiffView,                         Console::KeepUntilDetached},
+    {L"install-alias",   WithoutArgs<RunInstallAlias>,        Console::Keep},
+    {L"uninstall-alias", WithoutArgs<RunUninstallAlias>,      Console::Keep},
+    {L"install-diff",    WithoutArgs<RunInstallDiffViewer>,   Console::Keep},
+    {L"uninstall-diff",  WithoutArgs<RunUninstallDiffViewer>, Console::Keep},
 };
 
 }

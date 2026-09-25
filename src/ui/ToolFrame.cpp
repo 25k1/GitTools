@@ -48,14 +48,7 @@ ToolFrame::ToolFrame(const std::wstring& title, const wxSize& size)
         if (ShowOptionsDialog(this)) OnOptionsChanged();
     }, kIdOptions);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { Close(); }, wxID_EXIT);
-    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
-        if (event.GetKeyCode() == WXK_ESCAPE &&
-            event.GetModifiers() == wxMOD_NONE) {
-            Close();
-            return;
-        }
-        event.Skip();
-    });
+    CloseOnEscape(this, [this] { Close(); });
 
     SetTranscriptListener([this] { CallAfter([this] { RefreshTranscript(); }); });
 }
@@ -101,8 +94,7 @@ void ToolFrame::RefreshTranscript() {
         const TranscriptChunk chunk = TranscriptSince(cursor_);
         if (chunk.reset) {
             output_->ChangeValue(chunk.text);
-            output_->SetInsertionPointEnd();
-            output_->ShowPosition(output_->GetLastPosition());
+            MoveCaret(output_, output_->GetLastPosition());
         } else if (!chunk.text.empty()) {
             output_->AppendText(chunk.text);
         }

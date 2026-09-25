@@ -34,13 +34,20 @@ ProcessResult RunGit(const std::vector<std::wstring>& args,
     return r;
 }
 
+std::wstring GitFailure(const std::wstring& what, const ProcessResult& r) {
+    if (!r.started) return L"Failed to launch git:\n\n" + r.errorMessage;
+    if (r.exitCode == 0) return {};
+    return what + L" failed (exit " + std::to_wstring(r.exitCode) + L"):\n" +
+           Utf8ToWide(TrimRight(r.stderrText));
+}
+
 RepoContext OpenRepo() {
     RepoContext repo;
     repo.cwd = CurrentDirectory();
 
     ProcessResult top = RunGit({L"rev-parse", L"--show-toplevel"}, repo.cwd);
     if (!top.started) {
-        repo.errorMessage = L"Failed to launch git:\n\n" + top.errorMessage;
+        repo.errorMessage = GitFailure(L"git rev-parse", top);
         return repo;
     }
     repo.workTree = TrimmedOutput(top);
@@ -85,13 +92,6 @@ bool HasPrefix(std::wstring_view arg, const std::wstring_view (&prefixes)[N]) {
     return std::ranges::any_of(prefixes, [arg](std::wstring_view p) {
         return arg.starts_with(p);
     });
-}
-
-std::wstring GitFailure(const wchar_t* what, const ProcessResult& r) {
-    if (!r.started) return r.errorMessage;
-    if (r.exitCode == 0) return {};
-    return std::wstring(what) + L" failed (exit " +
-           std::to_wstring(r.exitCode) + L"):\n" + Utf8ToWide(r.stderrText);
 }
 
 std::vector<std::wstring> Concat(std::vector<std::wstring> head,
@@ -167,9 +167,7 @@ std::vector<FileChange> ParseRawStatus(std::wstring_view diff) {
         FileChange& fc = result.emplace_back();
         fc.kindChar = fields[0][0];
         fc.kind     = KindFromChar(fc.kindChar);
-        const bool twoPaths = (fc.kind == FileChangeKind::Renamed ||
-                               fc.kind == FileChangeKind::Copied) &&
-                              fields.size() >= 3;
+        const bool twoPaths = HasOldPath(fc.kind) && fields.size() >= 3;
         if (twoPaths) fc.oldPath = std::move(fields[1]);
         fc.path = std::move(fields[twoPaths ? 2 : 1]);
     });
@@ -457,8 +455,7 @@ CommitDetails LoadCommitDetails(const std::wstring& sha,
 
 std::wstring LoadCommitMessage(const std::wstring& sha,
                                const std::wstring& cwd) {
-    ProcessResult r = RunGit({L"show", L"-s", L"--format=%B", sha}, cwd);
-    return r.ok() ? TrimRight(Utf8ToWide(r.stdoutText)) : std::wstring();
+    return TrimmedOutput(RunGit({L"show", L"-s", L"--format=%B", sha}, cwd));
 }
 
 }

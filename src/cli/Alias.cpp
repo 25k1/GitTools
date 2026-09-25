@@ -1,9 +1,9 @@
 #include "cli/Alias.hpp"
 
+#include "git/Config.hpp"
 #include "git/Git.hpp"
 #include "util/System.hpp"
 
-#include <algorithm>
 #include <string>
 
 namespace git_tools {
@@ -22,11 +22,9 @@ constexpr AliasSpec kAliases[] = {
 };
 
 bool SetAlias(const std::wstring& name, const std::wstring& value) {
-    ProcessResult r = RunGit({L"config", L"--global", L"alias." + name, value});
+    const ProcessResult r = GlobalConfigSet(L"alias." + name, value);
     if (r.ok()) return true;
-    WriteErr(r.started ? L"git config failed for alias." + name + L":\n" +
-                             Utf8ToWide(TrimRight(r.stderrText))
-                       : L"Failed to launch git: " + r.errorMessage);
+    WriteErr(GitFailure(L"git config alias." + name, r));
     return false;
 }
 
@@ -35,16 +33,14 @@ bool SetAlias(const std::wstring& name, const std::wstring& value) {
 int RunInstallAlias() {
     UseUtf8Console();
 
-    std::wstring exe = ExecutablePath();
-    if (exe.empty()) {
-        WriteErr(L"Failed to resolve the gittools executable path.");
-        return 1;
-    }
-    std::ranges::replace(exe, L'\\', L'/');
-
     bool ok = true;
     for (const AliasSpec& a : kAliases) {
-        ok = SetAlias(a.name, L"!\"" + exe + L"\" " + a.subcommand) && ok;
+        const std::wstring command = SelfCommand(a.subcommand);
+        if (command.empty()) {
+            WriteErr(L"Failed to resolve the gittools executable path.");
+            return 1;
+        }
+        ok = SetAlias(a.name, L"!" + command) && ok;
     }
     if (!ok) return 1;
 
@@ -61,7 +57,7 @@ int RunInstallAlias() {
 int RunUninstallAlias() {
     UseUtf8Console();
     for (const AliasSpec& a : kAliases) {
-        RunGit({L"config", L"--global", L"--unset", std::wstring(L"alias.") + a.name});
+        GlobalConfigUnset(std::wstring(L"alias.") + a.name);
     }
     WriteOut(L"Removed git aliases (if present):");
     for (const AliasSpec& a : kAliases) WriteOut(std::wstring(L"  ") + a.name);

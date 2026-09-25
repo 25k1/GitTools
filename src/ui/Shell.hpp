@@ -11,8 +11,6 @@ std::wstring ParentDirectory(const std::wstring& path);
 
 bool PathExists(const std::wstring& path);
 
-std::string ReadFileBytes(const std::wstring& path);
-
 std::wstring FindEditor();
 
 void ResetEditorCache();

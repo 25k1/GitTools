@@ -4,6 +4,16 @@
 
 namespace git_tools {
 
+namespace {
+
+void SelectOnlyRow(wxListView* list, long row) {
+    list->SetItemState(-1, 0, wxLIST_STATE_SELECTED);
+    list->Select(row);
+    list->Focus(row);
+}
+
+}
+
 VirtualList::VirtualList(wxWindow* parent, bool multiple, const ColumnSet& columns,
                          TextFn text)
     : wxListView(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
@@ -46,10 +56,7 @@ void VirtualList::ApplyColumnLayout() {
     for (size_t i = 0; i < shown_.size(); ++i) {
         widths_[shown_[i]] = GetColumnWidth(static_cast<int>(i));
     }
-    shown_.clear();
-    for (const ColumnState& c : LoadColumnLayout(*columns_)) {
-        if (c.shown) shown_.push_back(c.id);
-    }
+    shown_ = VisibleColumns(*columns_);
 
     const int existing = GetColumnCount();
     for (int i = existing - 1; i >= static_cast<int>(shown_.size()); --i) {
@@ -108,9 +115,7 @@ std::vector<long> VirtualList::SelectedRows() const {
 }
 
 void VirtualList::SelectOnly(long row) {
-    SetItemState(-1, 0, wxLIST_STATE_SELECTED);
-    Select(row);
-    Focus(row);
+    SelectOnlyRow(this, row);
 }
 
 void VirtualList::SelectAllRows() {
@@ -160,9 +165,7 @@ long CheckList::SelectedRow() const {
 }
 
 void CheckList::SelectOnly(long row) {
-    SetItemState(-1, 0, wxLIST_STATE_SELECTED);
-    Select(row);
-    Focus(row);
+    SelectOnlyRow(this, row);
 }
 
 }

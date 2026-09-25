@@ -12,20 +12,7 @@ namespace {
 
 constexpr std::wstring_view kSection = L"gittools.";
 
-constexpr wchar_t           kDiffPagerKey[]  = L"pager.diff";
-constexpr std::wstring_view kDiffViewCommand = L" diff-view";
-
-std::wstring DiffViewerCommand() {
-    std::wstring exe = ExecutablePath();
-    if (exe.empty()) return {};
-    std::ranges::replace(exe, L'\\', L'/');
-    return L"\"" + exe + L"\"" + std::wstring(kDiffViewCommand);
-}
-
-std::wstring CurrentDiffPager() {
-    ProcessResult r = RunGit({L"config", L"--global", L"--get", kDiffPagerKey});
-    return r.ok() ? Utf8ToWide(TrimRight(r.stdoutText)) : std::wstring();
-}
+constexpr wchar_t kDiffPagerKey[] = L"pager.diff";
 
 std::map<std::wstring, std::wstring>& Cache() {
     static std::map<std::wstring, std::wstring> cache = [] {
@@ -77,26 +64,45 @@ int ConfigGetInt(const std::wstring& key, int fallback) {
 
 void ConfigSet(const std::wstring& key, const std::wstring& value) {
     Cache()[ToLower(key)] = value;
-    RunGit({L"config", L"--global", std::wstring(kSection) + key, value});
+    GlobalConfigSet(std::wstring(kSection) + key, value);
 }
 
 void ConfigSetBool(const std::wstring& key, bool value) {
     ConfigSet(key, value ? L"true" : L"false");
 }
 
+std::wstring GlobalConfigGet(const std::wstring& key) {
+    return TrimmedOutput(RunGit({L"config", L"--global", L"--get", key}));
+}
+
+ProcessResult GlobalConfigSet(const std::wstring& key, const std::wstring& value) {
+    return RunGit({L"config", L"--global", key, value});
+}
+
+bool GlobalConfigUnset(const std::wstring& key) {
+    return RunGit({L"config", L"--global", L"--unset", key}).ok();
+}
+
+std::wstring SelfCommand(std::wstring_view subcommand) {
+    std::wstring exe = ExecutablePath();
+    if (exe.empty()) return {};
+    std::ranges::replace(exe, L'\\', L'/');
+    return L"\"" + exe + L"\" " + std::wstring(subcommand);
+}
+
 bool DiffViewerInstalled() {
-    const std::wstring command = DiffViewerCommand();
-    return !command.empty() && CurrentDiffPager() == command;
+    const std::wstring command = SelfCommand(kDiffViewCommand);
+    return !command.empty() && GlobalConfigGet(kDiffPagerKey) == command;
 }
 
 bool SetDiffViewer(bool enabled) {
     if (enabled) {
-        const std::wstring command = DiffViewerCommand();
-        return !command.empty() &&
-               RunGit({L"config", L"--global", kDiffPagerKey, command}).ok();
+        const std::wstring command = SelfCommand(kDiffViewCommand);
+        return !command.empty() && GlobalConfigSet(kDiffPagerKey, command).ok();
     }
-    if (!CurrentDiffPager().ends_with(kDiffViewCommand)) return true;
-    return RunGit({L"config", L"--global", L"--unset", kDiffPagerKey}).ok();
+    const std::wstring current = GlobalConfigGet(kDiffPagerKey);
+    if (!current.ends_with(std::wstring(L" ") + kDiffViewCommand)) return true;
+    return GlobalConfigUnset(kDiffPagerKey);
 }
 
 }

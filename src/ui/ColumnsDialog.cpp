@@ -3,6 +3,7 @@
 #include "ui/App.hpp"
 #include "ui/Columns.hpp"
 #include "ui/ListView.hpp"
+#include "ui/Widgets.hpp"
 
 #include <wx/button.h>
 #include <wx/choice.h>
@@ -63,10 +64,6 @@ ColumnsDialog::ColumnsDialog(wxWindow* owner)
     auto* top    = new wxButton(this, wxID_ANY, L"Move to &top");
     auto* bottom = new wxButton(this, wxID_ANY, L"Move to &bottom");
 
-    auto* choiceRow = new wxBoxSizer(wxHORIZONTAL);
-    choiceRow->Add(choiceLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, gap);
-    choiceRow->Add(choice_, 1, wxEXPAND);
-
     auto* buttons = new wxBoxSizer(wxVERTICAL);
     for (wxButton* button : {up, down, top, bottom}) {
         buttons->Add(button, 0, wxEXPAND | wxBOTTOM, gap / 2);
@@ -77,13 +74,10 @@ ColumnsDialog::ColumnsDialog(wxWindow* owner)
     listRow->Add(buttons, 0, wxLEFT, gap);
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
-    sizer->Add(choiceRow, 0, wxEXPAND | wxALL, gap);
+    sizer->Add(LabeledRow(choiceLabel, choice_, gap), 0, wxEXPAND | wxALL, gap);
     sizer->Add(listLabel, 0, wxLEFT | wxRIGHT, gap);
-    sizer->Add(listRow, 1, wxEXPAND | wxALL, gap);
-    sizer->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
-               wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
-    SetSizerAndFit(sizer);
-    CentreOnParent();
+    sizer->Add(listRow, 1, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
+    FinishDialog(*this, sizer, gap);
 
     choice_->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) {
         const int index = choice_->GetSelection();

@@ -2,6 +2,7 @@
 #include "git/Config.hpp"
 #include "ui/Shell.hpp"
 #include "util/Encoding.hpp"
+#include "util/System.hpp"
 #include "util/Text.hpp"
 
 #include "ui/DiffWindow.hpp"
@@ -190,6 +191,7 @@ public:
     DiffDialog(wxWindow* owner, const DiffWindowParams& params);
 
 private:
+    bool CaretXY(long& column, long& line) const;
     long CaretLine() const;
     void ShowDiffText();
     void ToggleMarkers();
@@ -236,14 +238,7 @@ DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
     SetSize(FromDIP(wxSize(1030, 780)));
     CentreOnParent();
 
-    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
-        if (event.GetKeyCode() == WXK_ESCAPE &&
-            event.GetModifiers() == wxMOD_NONE) {
-            EndModal(wxID_CANCEL);
-            return;
-        }
-        event.Skip();
-    });
+    CloseOnEscape(this, [this] { EndModal(wxID_CANCEL); });
     edit_->Bind(wxEVT_KEY_DOWN, &DiffDialog::OnKeyDown, this);
     edit_->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& event) {
         event.Skip();
@@ -252,12 +247,14 @@ DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
     edit_->SetFocus();
 }
 
+bool DiffDialog::CaretXY(long& column, long& line) const {
+    return edit_->PositionToXY(edit_->GetInsertionPoint(), &column, &line);
+}
+
 long DiffDialog::CaretLine() const {
     long column = 0;
     long line   = 0;
-    return edit_->PositionToXY(edit_->GetInsertionPoint(), &column, &line)
-               ? line
-               : -1;
+    return CaretXY(column, line) ? line : -1;
 }
 
 void DiffDialog::ShowDiffText() {
@@ -268,11 +265,10 @@ void DiffDialog::ShowDiffText() {
 }
 
 void DiffDialog::ToggleMarkers() {
-    long column = 0;
-    long line   = 0;
-    const bool located =
-        edit_->PositionToXY(edit_->GetInsertionPoint(), &column, &line);
-    const long before = located ? edit_->GetLineLength(line) : 0;
+    long       column  = 0;
+    long       line    = 0;
+    const bool located = CaretXY(column, line);
+    const long before  = located ? edit_->GetLineLength(line) : 0;
 
     markers_ = !markers_;
     ConfigSetBool(kDiffMarkersKey, markers_);
@@ -283,15 +279,13 @@ void DiffDialog::ToggleMarkers() {
     const long delta  = before - length;
     const long start  = edit_->XYToPosition(0, line);
     if (start < 0) return;
-    const long target = start + std::clamp(column - delta, 0L, std::max(length, 0L));
-    edit_->SetInsertionPoint(target);
-    edit_->ShowPosition(target);
+    MoveCaret(edit_, start + std::clamp(column - delta, 0L, std::max(length, 0L)));
 }
 
 void DiffDialog::GoHome() {
     long column = 0;
     long line   = 0;
-    if (!edit_->PositionToXY(edit_->GetInsertionPoint(), &column, &line)) return;
+    if (!CaretXY(column, line)) return;
     const long start = edit_->XYToPosition(0, line);
     if (start < 0) return;
 
@@ -302,8 +296,7 @@ void DiffDialog::GoHome() {
             ++target;
         }
     }
-    edit_->SetInsertionPoint(start + static_cast<long>(target));
-    edit_->ShowPosition(start + static_cast<long>(target));
+    MoveCaret(edit_, start + static_cast<long>(target));
 }
 
 void DiffDialog::CheckCaretLineAndPlay() {
@@ -387,35 +380,33 @@ void DiffDialog::OpenEditorAtCaret() {
 }
 
 void DiffDialog::OnKeyDown(wxKeyEvent& event) {
-    const int  key       = event.GetKeyCode();
-    const int  modifiers = event.GetModifiers();
-    const bool ctrl      = (modifiers & ~wxMOD_SHIFT) == wxMOD_CONTROL;
-    const bool shift     = (modifiers & wxMOD_SHIFT) != 0;
+    const int key = event.GetKeyCode();
 
     if (key == WXK_TAB) return;
-    if (ctrl && !shift && key == 'A') {
+    if (IsKey(event, 'A', wxMOD_CONTROL)) {
         edit_->SelectAll();
         return;
     }
-    if (ctrl && shift && key == 'E') {
+    if (IsKey(event, 'E', wxMOD_CONTROL | wxMOD_SHIFT)) {
         OpenEditorAtCaret();
         return;
     }
-    if (key == WXK_HOME && modifiers == wxMOD_NONE) {
+    if (IsKey(event, WXK_HOME)) {
         GoHome();
         return;
     }
-    if (ctrl && !shift && key == 'I') {
+    if (IsKey(event, 'I', wxMOD_CONTROL)) {
         ToggleMarkers();
         return;
     }
-    if (ctrl && !shift && key == 'F') {
+    if (IsKey(event, 'F', wxMOD_CONTROL)) {
         OpenFindDialog();
         return;
     }
-    if (key == WXK_F3 && (modifiers & ~wxMOD_SHIFT) == wxMOD_NONE) {
+    if (const bool back = IsKey(event, WXK_F3, wxMOD_SHIFT);
+        back || IsKey(event, WXK_F3)) {
         if (find_.what.empty()) OpenFindDialog();
-        else                    FindInDiff(!shift);
+        else                    FindInDiff(!back);
         return;
     }
 

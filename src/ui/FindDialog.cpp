@@ -2,6 +2,8 @@
 
 #include "ui/FindDialog.hpp"
 
+#include "ui/Widgets.hpp"
+
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/dialog.h>
@@ -23,23 +25,15 @@ bool ShowFindDialog(wxWindow* owner, FindParams& params) {
 
     const int gap = dialog.FromDIP(8);
 
-    auto* row = new wxBoxSizer(wxHORIZONTAL);
-    row->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, gap);
-    row->Add(what, 1, wxALIGN_CENTER_VERTICAL);
-
     auto* checks = new wxBoxSizer(wxHORIZONTAL);
     checks->Add(matchCase, 0, wxRIGHT, gap);
     checks->Add(wrapAround);
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
-    sizer->Add(row, 0, wxEXPAND | wxALL, gap);
+    sizer->Add(LabeledRow(label, what, gap), 0, wxEXPAND | wxALL, gap);
     sizer->Add(checks, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
-    sizer->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
-               wxEXPAND | wxALL, gap);
-    dialog.SetSizer(sizer);
     what->SetMinSize(wxSize(dialog.FromDIP(320), -1));
-    sizer->Fit(&dialog);
-    dialog.CentreOnParent();
+    FinishDialog(dialog, sizer, gap);
 
     what->SetFocus();
     what->SelectAll();

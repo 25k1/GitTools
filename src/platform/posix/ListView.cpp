@@ -1,12 +1,24 @@
 #include "ui/ListView.hpp"
 
 #include "ui/Columns.hpp"
+#include "ui/Widgets.hpp"
 
 #include <gtk/gtk.h>
 
 #include <algorithm>
 
 namespace git_tools {
+
+namespace {
+
+void SelectOnlyItem(wxDataViewCtrl* view, const wxDataViewItem& item) {
+    view->UnselectAll();
+    view->Select(item);
+    view->SetCurrentItem(item);
+    view->EnsureVisible(item);
+}
+
+}
 
 class VirtualList::Model : public wxDataViewVirtualListModel {
 public:
@@ -58,10 +70,8 @@ VirtualList::VirtualList(wxWindow* parent, bool multiple, const ColumnSet& colum
         contextMenu_(at);
     });
     Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) {
-        const int  key       = event.GetKeyCode();
-        const int  modifiers = event.GetModifiers();
-        const bool menuKey   = (key == WXK_MENU && modifiers == wxMOD_NONE) ||
-                             (key == WXK_F10 && modifiers == wxMOD_SHIFT);
+        const bool menuKey =
+            IsKey(event, WXK_MENU) || IsKey(event, WXK_F10, wxMOD_SHIFT);
         if (!menuKey || !contextMenu_) {
             event.Skip();
             return;
@@ -80,11 +90,10 @@ void VirtualList::ApplyColumnLayout() {
         }
     }
     ClearColumns();
-    for (const ColumnState& c : LoadColumnLayout(*columns_)) {
-        if (!c.shown) continue;
-        const ColumnDef& def = columns_->columns[c.id];
-        AppendTextColumn(def.name, static_cast<unsigned>(c.id),
-                         wxDATAVIEW_CELL_INERT, widths_[c.id],
+    for (const size_t id : VisibleColumns(*columns_)) {
+        const ColumnDef& def = columns_->columns[id];
+        AppendTextColumn(def.name, static_cast<unsigned>(id),
+                         wxDATAVIEW_CELL_INERT, widths_[id],
                          def.right ? wxALIGN_RIGHT : wxALIGN_LEFT,
                          wxDATAVIEW_COL_RESIZABLE);
     }
@@ -133,11 +142,7 @@ std::vector<long> VirtualList::SelectedRows() const {
 
 void VirtualList::SelectOnly(long row) {
     if (row < 0 || static_cast<size_t>(row) >= model_->GetCount()) return;
-    const wxDataViewItem item = model_->GetItem(static_cast<unsigned>(row));
-    UnselectAll();
-    Select(item);
-    SetCurrentItem(item);
-    EnsureVisible(item);
+    SelectOnlyItem(this, model_->GetItem(static_cast<unsigned>(row)));
     if (selected_) selected_();
 }
 
@@ -182,8 +187,7 @@ CheckList::CheckList(wxWindow* parent, const wxSize& size)
     AppendTextColumn(L"Column", wxDATAVIEW_CELL_INERT, size.x - FromDIP(48));
     Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) {
         const long row = SelectedRow();
-        if (event.GetKeyCode() != WXK_SPACE ||
-            event.GetModifiers() != wxMOD_NONE || row < 0) {
+        if (!IsKey(event, WXK_SPACE) || row < 0) {
             event.Skip();
             return;
         }
@@ -219,11 +223,7 @@ long CheckList::SelectedRow() const {
 
 void CheckList::SelectOnly(long row) {
     const wxDataViewItem item = RowToItem(static_cast<int>(row));
-    if (!item.IsOk()) return;
-    UnselectAll();
-    Select(item);
-    SetCurrentItem(item);
-    EnsureVisible(item);
+    if (item.IsOk()) SelectOnlyItem(this, item);
 }
 
 }

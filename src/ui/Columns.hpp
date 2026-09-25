@@ -58,6 +58,8 @@ std::span<const ColumnSet* const> ColumnSets();
 
 ColumnLayout LoadColumnLayout(const ColumnSet& set);
 
+std::vector<size_t> VisibleColumns(const ColumnSet& set);
+
 void SaveColumnLayout(const ColumnSet& set, const ColumnLayout& layout);
 
 bool AnyColumnShown(const ColumnLayout& layout);

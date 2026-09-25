@@ -24,6 +24,10 @@ enum class FileChangeKind {
     Other,
 };
 
+inline bool HasOldPath(FileChangeKind kind) {
+    return kind == FileChangeKind::Renamed || kind == FileChangeKind::Copied;
+}
+
 struct FileChange {
     FileChangeKind kind     = FileChangeKind::Other;
     wchar_t        kindChar = L'?';

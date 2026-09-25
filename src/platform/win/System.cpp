@@ -1,11 +1,9 @@
 #include "util/System.hpp"
 
 #include "platform/win/CommandLine.hpp"
+#include "platform/win/Handles.hpp"
 #include "util/Encoding.hpp"
 
-#include <windows.h>
-
-#include <algorithm>
 #include <iterator>
 
 namespace git_tools {
@@ -22,9 +20,7 @@ void WriteConsoleLine(DWORD stdHandle, const std::wstring& s) {
         WriteConsoleW(h, line.data(), static_cast<DWORD>(line.size()),
                       &written, nullptr);
     } else {
-        const std::string bytes = WideToUtf8(line);
-        WriteFile(h, bytes.data(), static_cast<DWORD>(bytes.size()),
-                  &written, nullptr);
+        WriteAll(h, WideToUtf8(line));
     }
 }
 
@@ -67,7 +63,7 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
 }
 
 std::wstring LastSystemError() {
-    return L"error " + std::to_wstring(GetLastError());
+    return FormatLastError(GetLastError());
 }
 
 bool ReadStandardInput(std::string& bytes) {
@@ -76,12 +72,32 @@ bool ReadStandardInput(std::string& bytes) {
     if (in == nullptr || in == INVALID_HANDLE_VALUE || GetConsoleMode(in, &mode)) {
         return false;
     }
-    char  buf[65536];
-    DWORD got = 0;
-    while (ReadFile(in, buf, sizeof(buf), &got, nullptr) && got > 0) {
-        bytes.append(buf, got);
-    }
+    ReadAll(in, [&](std::string_view chunk) { bytes.append(chunk); });
     return true;
+}
+
+std::string ReadFileBytes(const std::wstring& path) {
+    constexpr LONGLONG kMaxBytes = 32LL * 1024 * 1024;
+
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return {};
+
+    std::string out;
+    LARGE_INTEGER size{};
+    if (GetFileSizeEx(file, &size) && size.QuadPart > 0 &&
+        size.QuadPart <= kMaxBytes) {
+        out.resize(static_cast<size_t>(size.QuadPart));
+        DWORD read = 0;
+        const BOOL ok = ReadFile(file, out.data(),
+                                 static_cast<DWORD>(out.size()), &read, nullptr);
+        out.resize(ok ? read : 0);
+    }
+    CloseHandle(file);
+
+    if (out.starts_with("\xEF\xBB\xBF")) out.erase(0, 3);
+    return out;
 }
 
 std::wstring WriteTempFile(std::string_view bytes) {
@@ -93,15 +109,7 @@ std::wstring WriteTempFile(std::string_view bytes) {
 
     HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                               FILE_ATTRIBUTE_TEMPORARY, nullptr);
-    bool ok = file != INVALID_HANDLE_VALUE;
-    for (size_t offset = 0; ok && offset < bytes.size();) {
-        const DWORD chunk = static_cast<DWORD>(
-            std::min<size_t>(bytes.size() - offset, size_t{1} << 20));
-        DWORD written = 0;
-        ok = WriteFile(file, bytes.data() + offset, chunk, &written, nullptr) &&
-             written > 0;
-        offset += written;
-    }
+    const bool ok = file != INVALID_HANDLE_VALUE && WriteAll(file, bytes);
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
     if (!ok) {
         const DWORD error = GetLastError();

@@ -66,10 +66,9 @@ std::wstring FormatCount(int value, bool suppressed) {
 }
 
 std::wstring ChangeName(const FileChange& fc) {
-    const bool twoPaths = fc.kind == FileChangeKind::Renamed ||
-                          fc.kind == FileChangeKind::Copied;
-    return (twoPaths && !fc.oldPath.empty()) ? fc.oldPath + L" -> " + fc.path
-                                             : fc.path;
+    return HasOldPath(fc.kind) && !fc.oldPath.empty()
+               ? fc.oldPath + L" -> " + fc.path
+               : fc.path;
 }
 
 std::wstring ChangeCell(const FileChange& fc, long column) {
@@ -471,15 +470,12 @@ void LogFrame::CopySelection(bool commits) {
 }
 
 void LogFrame::OnListKey(bool commits, wxKeyEvent& event) {
-    const bool ctrl = event.GetModifiers() == wxMOD_CONTROL;
-    const int  key  = event.GetKeyCode();
-
-    if (ctrl && key == 'A' && !commits) {
+    if (!commits && IsKey(event, 'A', wxMOD_CONTROL)) {
         changes_->SelectAllRows();
-    } else if (key == WXK_F5 && event.GetModifiers() == wxMOD_NONE) {
+    } else if (IsKey(event, WXK_F5)) {
         if (commits) ReloadCommitList();
         else         ReloadSelectedCommit();
-    } else if (ctrl && key == 'C') {
+    } else if (IsKey(event, 'C', wxMOD_CONTROL)) {
         CopySelection(commits);
     } else {
         event.Skip();

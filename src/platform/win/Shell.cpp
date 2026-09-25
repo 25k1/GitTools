@@ -125,30 +125,6 @@ bool PathExists(const std::wstring& path) {
 
 void ResetEditorCache() { EditorCache() = EditorCacheData(); }
 
-std::string ReadFileBytes(const std::wstring& path) {
-    constexpr LONGLONG kMaxBytes = 32LL * 1024 * 1024;
-
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return {};
-
-    std::string out;
-    LARGE_INTEGER size{};
-    if (GetFileSizeEx(file, &size) && size.QuadPart > 0 &&
-        size.QuadPart <= kMaxBytes) {
-        out.resize(static_cast<size_t>(size.QuadPart));
-        DWORD read = 0;
-        const BOOL ok = ReadFile(file, out.data(),
-                                 static_cast<DWORD>(out.size()), &read, nullptr);
-        out.resize(ok ? read : 0);
-    }
-    CloseHandle(file);
-
-    if (out.starts_with("\xEF\xBB\xBF")) out.erase(0, 3);
-    return out;
-}
-
 std::wstring FindEditor() {
     EditorCacheData& cache = EditorCache();
     if (cache.resolved) return cache.path;

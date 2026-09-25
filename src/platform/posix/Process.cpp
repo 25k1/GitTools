@@ -1,13 +1,10 @@
 #include "git/Process.hpp"
 
-#include "util/Encoding.hpp"
+#include "platform/posix/Fd.hpp"
 
-#include <cerrno>
 #include <csignal>
-#include <cstring>
 #include <fcntl.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 #include <string>
 #include <thread>
@@ -49,35 +46,11 @@ void IgnoreBrokenPipes() {
     (void)ignored;
 }
 
-void WriteAll(int fd, const std::string& data) {
-    size_t offset = 0;
-    while (offset < data.size()) {
-        const ssize_t n = write(fd, data.data() + offset, data.size() - offset);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return;
-        offset += static_cast<size_t>(n);
-    }
-}
-
 void DrainPipe(int fd, std::string& out, const OutputSink& sink = {}) {
-    char buf[16384];
-    for (;;) {
-        const ssize_t n = read(fd, buf, sizeof(buf));
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) break;
-        if (sink) sink(std::string_view(buf, static_cast<size_t>(n)));
-        else      out.append(buf, static_cast<size_t>(n));
-    }
-}
-
-std::wstring ErrorText(int code) {
-    return Utf8ToWide(std::strerror(code));
-}
-
-[[noreturn]] void ReportExecFailure(int fd) {
-    const int err = errno;
-    (void)!write(fd, &err, sizeof(err));
-    _exit(127);
+    ReadAll(fd, [&](std::string_view bytes) {
+        if (sink) sink(bytes);
+        else      out.append(bytes);
+    });
 }
 
 int ExitCodeOf(int status) {
@@ -102,13 +75,7 @@ ProcessResult RunProcess(const std::wstring& executable,
     ProcessResult result;
     IgnoreBrokenPipes();
 
-    std::vector<std::string> argStore;
-    argStore.reserve(args.size() + 1);
-    argStore.push_back(WideToUtf8(executable));
-    for (const std::wstring& a : args) argStore.push_back(WideToUtf8(a));
-    std::vector<char*> argv;
-    for (std::string& a : argStore) argv.push_back(a.data());
-    argv.push_back(nullptr);
+    ArgvList          argv(executable, args);
     const std::string dir = WideToUtf8(cwd);
 
     const bool capture = stdio == StdioMode::Capture;
@@ -136,17 +103,13 @@ ProcessResult RunProcess(const std::wstring& executable,
         if (!dir.empty() && chdir(dir.c_str()) != 0) {
             ReportExecFailure(execPipe.writeEnd.fd);
         }
-        execvp(argv[0], argv.data());
+        execvp(argv.file(), argv.get());
         ReportExecFailure(execPipe.writeEnd.fd);
     }
 
     execPipe.writeEnd.Close();
     int execError = 0;
-    ssize_t got = 0;
-    do {
-        got = read(execPipe.readEnd.fd, &execError, sizeof(execError));
-    } while (got < 0 && errno == EINTR);
-    if (got == static_cast<ssize_t>(sizeof(execError))) {
+    if (ReadExecFailure(execPipe.readEnd.fd, execError)) {
         int status = 0;
         while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
         result.errorMessage =
