@@ -13,7 +13,7 @@ TortoiseGit's shell extension started hanging and crashing Explorer on my machin
 - **`git lg`** - log dialog for any `git log` arguments (rev range, `--all`, `-n`, paths).
 - **`git br`** - branch switcher with current marker, upstream and tip subject.
 - **Log dialog** - commit list, message, and changed files with insertion and deletion counts.
-- **Diff viewer** - select one or more files to read their diffs together. Find with `Ctrl+F`, and `Ctrl+Shift+E` jumps into your editor at the matching line of the real file. Added and removed lines play a sound as you arrow through them.
+- **Diff viewer** - select one or more files to read their diffs together. Find with `Ctrl+F`, and `Ctrl+Shift+E` jumps into your editor at the matching line of the real file. Added and removed lines play a sound as you arrow through them, and `Ctrl+I` hides the `+`/`-` markers while keeping the sounds.
 - **Status bar** - shows the running git command and whether it succeeded, failed or was cancelled.
 
 ## Build
@@ -77,6 +77,7 @@ Settings live in your global git config under `gittools`. File > Options and the
 | `gittools.editor` | auto-detect | Editor command. `%1` is the file path (appended if absent), `%L` the line number. On Windows Notepad++ is found automatically and gets `-n<line>`; on Linux common editors (VS Code, Sublime, gedit, Kate, vim, emacs and others) get the line number automatically, and without a setting `xdg-open` is used |
 | `gittools.soundvolume` | `50` | Diff line sound volume, 0-100; `0` silences them |
 | `gittools.audiodevice` | default device | Output device id for the diff line sounds (WASAPI on Windows, PulseAudio or ALSA on Linux) |
+| `gittools.diffmarkers` | `true` | Show the `+`/`-` markers in the diff viewer; `Ctrl+I` there toggles it |
 | `gittools.unloadfarcommits` | `false` | Drop commits far from view in huge logs and reload them from git when needed |
 | `gittools.commitcolumns` | `subject,author,date,insertions,deletions` | Column order of the commit list; a `-` prefix hides a column. Options > Configure columns edits it |
 | `gittools.changecolumns` | `name,state,insertions,deletions` | Same for the changed files list |

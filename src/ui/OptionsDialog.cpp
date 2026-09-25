@@ -57,6 +57,11 @@ bool ShowOptionsDialog(wxWindow* owner) {
         L"(reloaded from git when needed)");
     unloadFar->SetValue(ConfigGetBool(kUnloadFarCommitsKey, false));
 
+    auto* diffMarkers = new wxCheckBox(
+        &dialog, wxID_ANY,
+        L"Show + and - &indicators in the diff viewer (Ctrl+I)");
+    diffMarkers->SetValue(ConfigGetBool(kDiffMarkersKey, true));
+
     bool columnsChanged = false;
     auto* columns = new wxButton(&dialog, wxID_ANY, L"Configure &columns...");
     columns->Bind(wxEVT_BUTTON, [&dialog, &columnsChanged](wxCommandEvent&) {
@@ -105,6 +110,7 @@ bool ShowOptionsDialog(wxWindow* owner) {
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(grid, 0, wxEXPAND | wxALL, gap);
     sizer->Add(unloadFar, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
+    sizer->Add(diffMarkers, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(columns, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(audio, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
@@ -124,6 +130,7 @@ bool ShowOptionsDialog(wxWindow* owner) {
     ConfigSet(kEditorKey, editor->GetValue().ToStdWstring());
     ConfigSet(kSoundVolumeKey, std::to_wstring(volume->GetValue()));
     ConfigSetBool(kUnloadFarCommitsKey, unloadFar->GetValue());
+    ConfigSetBool(kDiffMarkersKey, diffMarkers->GetValue());
     ConfigSet(kAudioDeviceKey,
               choice >= 0 && static_cast<size_t>(choice) < devices.size()
                   ? devices[static_cast<size_t>(choice)].id

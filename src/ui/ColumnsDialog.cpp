@@ -36,7 +36,7 @@ private:
     void MoveSelected(Shift shift);
     bool ListHasFocus() const;
     void OnOk(wxCommandEvent& event);
-    void OnCharHook(wxKeyEvent& event);
+    void OnListShortcut(wxKeyEvent& event);
 
     std::span<const ColumnSet* const> sets_;
     std::vector<ColumnLayout>         saved_;
@@ -108,7 +108,7 @@ ColumnsDialog::ColumnsDialog(wxWindow* owner)
     top->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { MoveSelected(Shift::Top); });
     bottom->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { MoveSelected(Shift::Bottom); });
     Bind(wxEVT_BUTTON, &ColumnsDialog::OnOk, this, wxID_OK);
-    Bind(wxEVT_CHAR_HOOK, &ColumnsDialog::OnCharHook, this);
+    Bind(wxEVT_CHAR_HOOK, &ColumnsDialog::OnListShortcut, this);
 
     choice_->SetSelection(0);
     ShowSet(0);
@@ -203,7 +203,7 @@ void ColumnsDialog::OnOk(wxCommandEvent& event) {
     event.Skip();
 }
 
-void ColumnsDialog::OnCharHook(wxKeyEvent& event) {
+void ColumnsDialog::OnListShortcut(wxKeyEvent& event) {
     if (event.GetModifiers() == wxMOD_CONTROL && ListHasFocus()) {
         switch (event.GetKeyCode()) {
             case WXK_UP:   MoveSelected(Shift::Up);     return;
