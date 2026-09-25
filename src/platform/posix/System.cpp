@@ -3,6 +3,7 @@
 #include "util/Encoding.hpp"
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <limits.h>
@@ -110,6 +111,44 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
 
 std::wstring LastSystemError() {
     return Utf8ToWide(std::strerror(lastError));
+}
+
+bool ReadStandardInput(std::string& bytes) {
+    if (isatty(0)) return false;
+    char buf[65536];
+    for (;;) {
+        const ssize_t n = read(0, buf, sizeof(buf));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return true;
+        bytes.append(buf, static_cast<size_t>(n));
+    }
+}
+
+std::wstring WriteTempFile(std::string_view bytes) {
+    const char* dir  = std::getenv("TMPDIR");
+    std::string path = std::string(dir && *dir ? dir : "/tmp") + "/gittools-diff-XXXXXX";
+    const int   fd   = mkstemp(path.data());
+    if (fd < 0) {
+        lastError = errno;
+        return {};
+    }
+    for (size_t offset = 0; offset < bytes.size();) {
+        const ssize_t n = write(fd, bytes.data() + offset, bytes.size() - offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) {
+            lastError = n < 0 ? errno : EIO;
+            close(fd);
+            unlink(path.c_str());
+            return {};
+        }
+        offset += static_cast<size_t>(n);
+    }
+    close(fd);
+    return Utf8ToWide(path);
+}
+
+void RemoveFile(const std::wstring& path) {
+    unlink(WideToUtf8(path).c_str());
 }
 
 void UseUtf8Console() {}

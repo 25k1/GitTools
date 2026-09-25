@@ -24,6 +24,8 @@ std::function<int()>& StartFunction() {
     return start;
 }
 
+}
+
 #ifdef _WIN32
 
 void ForceForeground(wxTopLevelWindow* window) {
@@ -52,8 +54,6 @@ void ForceForeground(wxTopLevelWindow* window) {
 }
 
 #endif
-
-}
 
 class GitToolsApp : public wxApp {
 public:

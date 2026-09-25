@@ -14,8 +14,9 @@ TortoiseGit's shell extension started hanging and crashing Explorer on my machin
 - **`git br`** - branch switcher with current marker, upstream and tip subject.
 - **Log dialog** - commit list, message, and changed files with insertion and deletion counts.
 - **Diff viewer** - select one or more files to read their diffs together. Find with `Ctrl+F`, and `Ctrl+Shift+E` jumps into your editor at the matching line of the real file. Added and removed lines play a sound as you arrow through them, and `Ctrl+I` hides the `+`/`-` markers while keeping the sounds.
+- **`git diff`** - optionally opens in the diff viewer instead of the terminal pager (`gittools install-diff`, or File > Options).
 - **Status bar** - shows the running git command and whether it succeeded, failed or was cancelled.
-
+fghfjg
 ## Build
 
 ### Windows
@@ -66,6 +67,8 @@ That registers `git pl`, `git lg` and `git br` in your global git config, pointi
 | `gittools log-range OLD NEW` | log dialog for `OLD..NEW` |
 | `gittools branch` | branch switcher dialog |
 | `gittools install-alias` / `uninstall-alias` | add or remove the aliases |
+| `gittools install-diff` / `uninstall-diff` | make `git diff` open in the diff viewer, or undo it |
+| `gittools diff-view` | diff viewer for a diff on standard input, e.g. `git diff \| gittools diff-view` |
 | `gittools --version`, `-v` | print the version |
 
 ## Configuration

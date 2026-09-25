@@ -4,6 +4,7 @@
 #include "cli/Alias.hpp"
 #include "cli/Branches.hpp"
 #include "cli/Detached.hpp"
+#include "cli/DiffView.hpp"
 #include "cli/Log.hpp"
 #include "cli/PullLog.hpp"
 #include "git/Git.hpp"
@@ -52,8 +53,11 @@ int RunUsage() {
         L"  gittools log [args]            open the log window for any git-log args\n"
         L"  gittools log-range OLD NEW     open the log window for OLD..NEW\n"
         L"  gittools branch                open the branch switcher\n"
+        L"  gittools diff-view             show a diff read from standard input\n"
         L"  gittools install-alias         add `git pl` / `git lg` / `git br` to ~/.gitconfig\n"
         L"  gittools uninstall-alias       remove those aliases\n"
+        L"  gittools install-diff          open `git diff` in gittools (pager.diff)\n"
+        L"  gittools uninstall-diff        restore the normal `git diff` pager\n"
         L"  gittools --version, -v         print the version\n";
     return RunGui([usage] {
         ShowInfo(nullptr, L"gittools", usage);
@@ -81,9 +85,14 @@ constexpr Command kCommands[] = {
     {L"log",             RunLog,      Console::KeepUntilDetached},
     {L"log-range",       RunLogRange, Console::Free},
     {L"branch",          RunBranch,   Console::KeepUntilDetached},
+    {L"diff-view",       RunDiffView, Console::KeepUntilDetached},
     {L"install-alias",   [](int, wchar_t**) { return RunInstallAlias(); },
                          Console::Keep},
     {L"uninstall-alias", [](int, wchar_t**) { return RunUninstallAlias(); },
+                         Console::Keep},
+    {L"install-diff",    [](int, wchar_t**) { return RunInstallDiffViewer(); },
+                         Console::Keep},
+    {L"uninstall-diff",  [](int, wchar_t**) { return RunUninstallDiffViewer(); },
                          Console::Keep},
 };
 

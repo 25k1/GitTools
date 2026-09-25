@@ -425,9 +425,27 @@ void DiffDialog::OnKeyDown(wxKeyEvent& event) {
 
 }
 
+std::wstring SeparateFileDiffs(std::wstring_view text) {
+    std::wstring out;
+    out.reserve(text.size() + 64);
+    size_t pos = 0;
+    while (pos < text.size()) {
+        const size_t eol  = text.find(L'\n', pos);
+        const size_t next = (eol == text.npos) ? text.size() : eol + 1;
+        if (!out.empty() && text.substr(pos).starts_with(L"diff --git ")) {
+            if (out.back() != L'\n') out += L'\n';
+            out += L"\n\n";
+        }
+        out += text.substr(pos, next - pos);
+        pos = next;
+    }
+    return out;
+}
+
 void ShowDiffWindow(wxWindow* owner, const DiffWindowParams& params) {
     {
         DiffDialog dialog(owner, params);
+        if (!owner) dialog.CallAfter([&dialog] { ForceForeground(&dialog); });
         dialog.ShowModal();
     }
     CloseAudio();

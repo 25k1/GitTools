@@ -483,6 +483,7 @@ add_executable(gittools
     src/cli/Alias.cpp
     src/cli/Branches.cpp
     src/cli/Detached.cpp
+    src/cli/DiffView.cpp
     src/cli/Dispatch.cpp
     src/cli/Log.cpp
     src/cli/PullLog.cpp

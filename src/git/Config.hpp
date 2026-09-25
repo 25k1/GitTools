@@ -24,6 +24,10 @@ void ConfigSet(const std::wstring& key, const std::wstring& value);
 
 void ConfigSetBool(const std::wstring& key, bool value);
 
+bool DiffViewerInstalled();
+
+bool SetDiffViewer(bool enabled);
+
 inline int SoundVolumePercent() {
     return std::clamp(ConfigGetInt(kSoundVolumeKey, 50), 0, 100);
 }

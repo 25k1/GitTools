@@ -5,6 +5,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <iterator>
 
 namespace git_tools {
@@ -67,6 +68,52 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
 
 std::wstring LastSystemError() {
     return L"error " + std::to_wstring(GetLastError());
+}
+
+bool ReadStandardInput(std::string& bytes) {
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD  mode = 0;
+    if (in == nullptr || in == INVALID_HANDLE_VALUE || GetConsoleMode(in, &mode)) {
+        return false;
+    }
+    char  buf[65536];
+    DWORD got = 0;
+    while (ReadFile(in, buf, sizeof(buf), &got, nullptr) && got > 0) {
+        bytes.append(buf, got);
+    }
+    return true;
+}
+
+std::wstring WriteTempFile(std::string_view bytes) {
+    wchar_t dir[MAX_PATH + 1];
+    const DWORD n = GetTempPathW(static_cast<DWORD>(std::size(dir)), dir);
+    if (n == 0 || n >= std::size(dir)) return {};
+    wchar_t path[MAX_PATH];
+    if (GetTempFileNameW(dir, L"gtd", 0, path) == 0) return {};
+
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_TEMPORARY, nullptr);
+    bool ok = file != INVALID_HANDLE_VALUE;
+    for (size_t offset = 0; ok && offset < bytes.size();) {
+        const DWORD chunk = static_cast<DWORD>(
+            std::min<size_t>(bytes.size() - offset, size_t{1} << 20));
+        DWORD written = 0;
+        ok = WriteFile(file, bytes.data() + offset, chunk, &written, nullptr) &&
+             written > 0;
+        offset += written;
+    }
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    if (!ok) {
+        const DWORD error = GetLastError();
+        DeleteFileW(path);
+        SetLastError(error);
+        return {};
+    }
+    return path;
+}
+
+void RemoveFile(const std::wstring& path) {
+    DeleteFileW(path.c_str());
 }
 
 void UseUtf8Console() {

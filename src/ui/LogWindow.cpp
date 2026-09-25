@@ -59,23 +59,6 @@ std::wstring ComposeTitle(const LogWindowParams& p, const std::wstring& branch) 
     return t;
 }
 
-std::wstring SeparateFileDiffs(std::wstring_view text) {
-    std::wstring out;
-    out.reserve(text.size() + 64);
-    size_t pos = 0;
-    while (pos < text.size()) {
-        const size_t eol  = text.find(L'\n', pos);
-        const size_t next = (eol == text.npos) ? text.size() : eol + 1;
-        if (!out.empty() && text.substr(pos).starts_with(L"diff --git ")) {
-            if (out.back() != L'\n') out += L'\n';
-            out += L"\n\n";
-        }
-        out += text.substr(pos, next - pos);
-        pos = next;
-    }
-    return out;
-}
-
 std::wstring FormatCount(int value, bool suppressed) {
     if (suppressed)  return L"";
     if (value == -2) return L"bin";

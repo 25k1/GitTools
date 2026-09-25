@@ -1,7 +1,9 @@
 #include "git/Config.hpp"
 
 #include "git/Git.hpp"
+#include "util/System.hpp"
 
+#include <algorithm>
 #include <map>
 
 namespace git_tools {
@@ -9,6 +11,21 @@ namespace git_tools {
 namespace {
 
 constexpr std::wstring_view kSection = L"gittools.";
+
+constexpr wchar_t           kDiffPagerKey[]  = L"pager.diff";
+constexpr std::wstring_view kDiffViewCommand = L" diff-view";
+
+std::wstring DiffViewerCommand() {
+    std::wstring exe = ExecutablePath();
+    if (exe.empty()) return {};
+    std::ranges::replace(exe, L'\\', L'/');
+    return L"\"" + exe + L"\"" + std::wstring(kDiffViewCommand);
+}
+
+std::wstring CurrentDiffPager() {
+    ProcessResult r = RunGit({L"config", L"--global", L"--get", kDiffPagerKey});
+    return r.ok() ? Utf8ToWide(TrimRight(r.stdoutText)) : std::wstring();
+}
 
 std::map<std::wstring, std::wstring>& Cache() {
     static std::map<std::wstring, std::wstring> cache = [] {
@@ -65,6 +82,21 @@ void ConfigSet(const std::wstring& key, const std::wstring& value) {
 
 void ConfigSetBool(const std::wstring& key, bool value) {
     ConfigSet(key, value ? L"true" : L"false");
+}
+
+bool DiffViewerInstalled() {
+    const std::wstring command = DiffViewerCommand();
+    return !command.empty() && CurrentDiffPager() == command;
+}
+
+bool SetDiffViewer(bool enabled) {
+    if (enabled) {
+        const std::wstring command = DiffViewerCommand();
+        return !command.empty() &&
+               RunGit({L"config", L"--global", kDiffPagerKey, command}).ok();
+    }
+    if (!CurrentDiffPager().ends_with(kDiffViewCommand)) return true;
+    return RunGit({L"config", L"--global", L"--unset", kDiffPagerKey}).ok();
 }
 
 }

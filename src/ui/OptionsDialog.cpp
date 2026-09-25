@@ -4,6 +4,7 @@
 
 #include "ui/OptionsDialog.hpp"
 
+#include "ui/App.hpp"
 #include "ui/ColumnsDialog.hpp"
 
 #include <wx/button.h>
@@ -62,6 +63,12 @@ bool ShowOptionsDialog(wxWindow* owner) {
         L"Show + and - &indicators in the diff viewer (Ctrl+I)");
     diffMarkers->SetValue(ConfigGetBool(kDiffMarkersKey, true));
 
+    const bool diffViewerWas = DiffViewerInstalled();
+    auto* diffViewer = new wxCheckBox(
+        &dialog, wxID_ANY,
+        L"Open git diff output in &gittools (sets pager.diff in the global git config)");
+    diffViewer->SetValue(diffViewerWas);
+
     bool columnsChanged = false;
     auto* columns = new wxButton(&dialog, wxID_ANY, L"Configure &columns...");
     columns->Bind(wxEVT_BUTTON, [&dialog, &columnsChanged](wxCommandEvent&) {
@@ -111,6 +118,7 @@ bool ShowOptionsDialog(wxWindow* owner) {
     sizer->Add(grid, 0, wxEXPAND | wxALL, gap);
     sizer->Add(unloadFar, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(diffMarkers, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
+    sizer->Add(diffViewer, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(columns, 0, wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(audio, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
     sizer->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
@@ -131,6 +139,10 @@ bool ShowOptionsDialog(wxWindow* owner) {
     ConfigSet(kSoundVolumeKey, std::to_wstring(volume->GetValue()));
     ConfigSetBool(kUnloadFarCommitsKey, unloadFar->GetValue());
     ConfigSetBool(kDiffMarkersKey, diffMarkers->GetValue());
+    if (diffViewer->GetValue() != diffViewerWas &&
+        !SetDiffViewer(diffViewer->GetValue())) {
+        ShowError(owner, L"Options", L"Failed to update pager.diff in the global git config.");
+    }
     ConfigSet(kAudioDeviceKey,
               choice >= 0 && static_cast<size_t>(choice) < devices.size()
                   ? devices[static_cast<size_t>(choice)].id

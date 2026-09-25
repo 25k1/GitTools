@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace git_tools {
@@ -14,6 +15,12 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
                           const std::vector<std::wstring>& args);
 
 std::wstring LastSystemError();
+
+bool ReadStandardInput(std::string& bytes);
+
+std::wstring WriteTempFile(std::string_view bytes);
+
+void RemoveFile(const std::wstring& path);
 
 void UseUtf8Console();
 

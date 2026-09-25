@@ -12,6 +12,8 @@ int RunGui(std::function<int()> start);
 
 void ShowOnActiveDisplay(wxTopLevelWindow* window);
 
+void ForceForeground(wxTopLevelWindow* window);
+
 void ShowError(wxWindow* parent, const std::wstring& title,
                const std::wstring& text);
 
