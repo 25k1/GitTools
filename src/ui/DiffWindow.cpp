@@ -7,6 +7,7 @@
 
 #include "ui/DiffWindow.hpp"
 
+#include "ui/Announce.hpp"
 #include "ui/App.hpp"
 #include "ui/FindDialog.hpp"
 #include "ui/Widgets.hpp"
@@ -239,6 +240,7 @@ DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
     CentreOnParent();
 
     CloseOnEscape(this, [this] { EndModal(wxID_CANCEL); });
+    PrepareAnnouncements(this);
     edit_->Bind(wxEVT_KEY_DOWN, &DiffDialog::OnKeyDown, this);
     edit_->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& event) {
         event.Skip();
@@ -273,13 +275,14 @@ void DiffDialog::ToggleMarkers() {
     markers_ = !markers_;
     ConfigSetBool(kDiffMarkersKey, markers_);
     ShowDiffText();
-    if (!located) return;
 
-    const long length = edit_->GetLineLength(line);
-    const long delta  = before - length;
-    const long start  = edit_->XYToPosition(0, line);
-    if (start < 0) return;
-    MoveCaret(edit_, start + std::clamp(column - delta, 0L, std::max(length, 0L)));
+    const long start = located ? edit_->XYToPosition(0, line) : -1;
+    if (start >= 0) {
+        const long length = edit_->GetLineLength(line);
+        const long delta  = before - length;
+        MoveCaret(edit_, start + std::clamp(column - delta, 0L, std::max(length, 0L)));
+    }
+    Announce(edit_, markers_ ? L"Diff markers shown" : L"Diff markers hidden");
 }
 
 void DiffDialog::GoHome() {

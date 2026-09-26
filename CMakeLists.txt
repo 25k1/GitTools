@@ -510,6 +510,7 @@ else()
     set(GITTOOLS_PLATFORM_DIR src/platform/posix)
 endif()
 target_sources(gittools PRIVATE
+    ${GITTOOLS_PLATFORM_DIR}/Announce.cpp
     ${GITTOOLS_PLATFORM_DIR}/Compression.cpp
     ${GITTOOLS_PLATFORM_DIR}/Encoding.cpp
     ${GITTOOLS_PLATFORM_DIR}/ListView.cpp
@@ -544,6 +545,8 @@ if(WIN32)
         shell32
         advapi32
         cabinet
+        oleaut32
+        uiautomationcore
     )
 else()
     find_package(ZLIB REQUIRED)
