@@ -181,6 +181,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v8
         with:
           name: gittools.exe
@@ -211,10 +215,28 @@ jobs:
             gh release upload "$TAG" "${assets[@]}" --clobber
           else
             flags=()
-            case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+            describe=(git describe --tags --abbrev=0 --match 'v*')
+            case "$VERSION" in
+              *-*) flags+=(--prerelease) ;;
+              # A stable release lists everything since the previous stable one.
+              *) describe+=(--exclude '*-*') ;;
+            esac
+            {
+              if prev=$("${describe[@]}" "$TAG^" 2>/dev/null); then
+                range="$prev..$TAG"
+                compare="**Full Changelog**: https://github.com/$GH_REPO/compare/$prev...$TAG"
+              else
+                range="$TAG"
+                compare=''
+              fi
+              echo "## Changes"
+              echo
+              git log --no-merges --reverse --format='- %s (%h)' "$range"
+              if [ -n "$compare" ]; then echo; echo "$compare"; fi
+            } > notes.md
             gh release create "$TAG" "${assets[@]}" \
               --verify-tag \
               --title "gittools $VERSION" \
-              --generate-notes \
+              --notes-file notes.md \
               "${flags[@]}"
           fi
