@@ -4,6 +4,7 @@
 #include <oleauto.h>
 #include <uiautomation.h>
 
+#include <wx/event.h>
 #include <wx/toplevel.h>
 #include <wx/window.h>
 
@@ -98,14 +99,21 @@ LRESULT CALLBACK AnnouncerProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lP
     return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
-HWND AnnouncerWindow(wxWindow* window) {
-    if (!window) return nullptr;
-    wxWindow* top    = wxGetTopLevelParent(window);
-    const HWND parent = static_cast<HWND>((top ? top : window)->GetHWND());
-    if (HWND existing = FindWindowExW(parent, nullptr, kClassName, nullptr)) {
-        return existing;
-    }
+void InviteClients(HWND announcer) {
+    NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, announcer, OBJID_CLIENT, CHILDID_SELF);
+}
 
+wxWindow* TopLevelOf(wxWindow* window) {
+    wxWindow* top = window ? wxGetTopLevelParent(window) : nullptr;
+    return top ? top : window;
+}
+
+HWND FindAnnouncer(wxWindow* top) {
+    return top ? FindWindowExW(static_cast<HWND>(top->GetHWND()), nullptr, kClassName, nullptr)
+               : nullptr;
+}
+
+HWND CreateAnnouncer(wxWindow* top) {
     const HINSTANCE instance = GetModuleHandleW(nullptr);
     static const ATOM registered = [instance] {
         WNDCLASSEXW wc{};
@@ -118,12 +126,23 @@ HWND AnnouncerWindow(wxWindow* window) {
     if (!registered) return nullptr;
 
     HWND hwnd = CreateWindowExW(0, kClassName, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0,
-                                parent, nullptr, instance, nullptr);
-    if (hwnd) {
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                          reinterpret_cast<LONG_PTR>(new AnnouncerProvider(hwnd)));
-    }
+                                static_cast<HWND>(top->GetHWND()), nullptr, instance,
+                                nullptr);
+    if (!hwnd) return nullptr;
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                      reinterpret_cast<LONG_PTR>(new AnnouncerProvider(hwnd)));
+    top->Bind(wxEVT_ACTIVATE, [hwnd](wxActivateEvent& event) {
+        event.Skip();
+        if (event.GetActive()) InviteClients(hwnd);
+    });
     return hwnd;
+}
+
+HWND AnnouncerFor(wxWindow* window) {
+    wxWindow* top = TopLevelOf(window);
+    if (!top || !top->GetHWND()) return nullptr;
+    const HWND existing = FindAnnouncer(top);
+    return existing ? existing : CreateAnnouncer(top);
 }
 
 RaiseNotificationEvent RaiseFunction() {
@@ -136,15 +155,16 @@ RaiseNotificationEvent RaiseFunction() {
 }
 
 void PrepareAnnouncements(wxWindow* window) {
-    AnnouncerWindow(window);
+    AnnouncerFor(window);
 }
 
 void Announce(wxWindow* window, const std::wstring& text) {
     static const RaiseNotificationEvent raise = RaiseFunction();
-    const HWND hwnd = AnnouncerWindow(window);
+    const HWND hwnd = AnnouncerFor(window);
     AnnouncerProvider* provider = hwnd ? ProviderOf(hwnd) : nullptr;
     if (!raise || !provider) return;
 
+    InviteClients(hwnd);
     BSTR message  = SysAllocString(text.c_str());
     BSTR activity = SysAllocString(L"gittools");
     raise(provider, kNotificationKindActionCompleted,

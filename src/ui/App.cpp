@@ -44,7 +44,11 @@ void ForceForeground(wxTopLevelWindow* window) {
 
     if (share) AttachThreadInput(self, owner, FALSE);
 
-    if (GetForegroundWindow() != hwnd) window->RequestUserAttention();
+    if (GetForegroundWindow() != hwnd) {
+        window->RequestUserAttention();
+    } else if (const HWND focus = GetFocus()) {
+        NotifyWinEvent(EVENT_OBJECT_FOCUS, focus, OBJID_CLIENT, CHILDID_SELF);
+    }
 }
 
 #else
