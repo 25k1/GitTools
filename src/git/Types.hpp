@@ -24,6 +24,18 @@ enum class FileChangeKind {
     Other,
 };
 
+inline FileChangeKind KindFromChar(wchar_t c) {
+    switch (c) {
+        case L'A': return FileChangeKind::Added;
+        case L'D': return FileChangeKind::Deleted;
+        case L'M': return FileChangeKind::Modified;
+        case L'R': return FileChangeKind::Renamed;
+        case L'C': return FileChangeKind::Copied;
+        case L'T': return FileChangeKind::TypeChanged;
+        default:   return FileChangeKind::Other;
+    }
+}
+
 inline bool HasOldPath(FileChangeKind kind) {
     return kind == FileChangeKind::Renamed || kind == FileChangeKind::Copied;
 }
@@ -48,7 +60,6 @@ struct Branch {
     bool         isRemote  = false;
     std::wstring name;
     std::wstring upstream;
-    std::wstring shortSha;
     std::wstring subject;
 };
 

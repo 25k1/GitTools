@@ -6,10 +6,11 @@
 #include "util/System.hpp"
 
 #include "ui/App.hpp"
-#include "ui/DiffWindow.hpp"
+#include "ui/DiffListWindow.hpp"
 
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace git_tools {
 
@@ -40,12 +41,11 @@ int ShowDiffFromFile(const std::wstring& path) {
     if (bytes.empty()) return 0;
     return RunGui([&] {
         const RepoContext repo = OpenRepo();
-        DiffWindowParams  p;
-        p.title    = repo.ok() ? L"gittools - diff - " + repo.root
-                               : std::wstring(L"gittools - diff");
-        p.diffText = SeparateFileDiffs(Utf8ToWide(bytes));
+        DiffListParams    p;
+        p.origin   = repo.ok() ? repo.root : std::wstring();
+        p.diffText = Utf8ToWide(bytes);
         p.workTree = repo.ok() ? repo.workTree : CurrentDirectory();
-        ShowDiffWindow(nullptr, p);
+        ShowDiffList(std::move(p));
         return 0;
     });
 }
@@ -76,7 +76,6 @@ int RunDiffView(int argc, wchar_t** argv) {
 }
 
 int RunInstallDiffViewer() {
-    UseUtf8Console();
     if (!SetDiffViewer(true)) {
         WriteErr(L"Failed to set pager.diff in the global git config.");
         return 1;
@@ -88,7 +87,6 @@ int RunInstallDiffViewer() {
 }
 
 int RunUninstallDiffViewer() {
-    UseUtf8Console();
     if (!SetDiffViewer(false)) {
         WriteErr(L"Failed to unset pager.diff in the global git config.");
         return 1;

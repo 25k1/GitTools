@@ -1,8 +1,9 @@
 #pragma once
 
-#include <wx/frame.h>
+#include "ui/MenuFrame.hpp"
 
 #include <string>
+#include <vector>
 
 class wxBoxSizer;
 class wxPanel;
@@ -11,7 +12,7 @@ class wxTextCtrl;
 
 namespace git_tools {
 
-class ToolFrame : public wxFrame {
+class ToolFrame : public MenuFrame {
 public:
     ToolFrame(const std::wstring& title, const wxSize& size);
     ~ToolFrame() override;
@@ -19,7 +20,7 @@ public:
 protected:
     wxPanel* Panel() const { return panel_; }
 
-    void AddLabel(const wchar_t* text);
+    wxStaticText* AddLabel(const wchar_t* text);
     void AddPane(wxWindow* pane, int proportion);
     void FinishLayout(wxWindow* absorber, int outputShare);
 
@@ -27,7 +28,8 @@ protected:
     void RefreshStatus();
 
     virtual std::wstring StatusText() const;
-    virtual void         OnOptionsChanged() {}
+
+    std::vector<MenuSection> Menus() override;
 
 private:
     void ToggleDebugOutput();

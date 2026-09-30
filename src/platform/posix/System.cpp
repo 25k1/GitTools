@@ -4,9 +4,7 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <fcntl.h>
 #include <limits.h>
-#include <sys/wait.h>
 
 namespace git_tools {
 
@@ -52,8 +50,8 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
     ArgvList          argv(executable, args);
     const std::string dir = WideToUtf8(cwd);
 
-    int status[2];
-    if (pipe2(status, O_CLOEXEC) != 0) {
+    Pipe status;
+    if (!status.Open()) {
         lastError = errno;
         return false;
     }
@@ -61,8 +59,6 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
     const pid_t pid = fork();
     if (pid < 0) {
         lastError = errno;
-        close(status[0]);
-        close(status[1]);
         return false;
     }
     if (pid == 0) {
@@ -75,14 +71,13 @@ bool SpawnDetachedProcess(const std::wstring& cwd,
                 execvp(argv.file(), argv.get());
             }
         }
-        ReportExecFailure(status[1]);
+        ReportExecFailure(status.writeEnd.fd);
     }
 
-    close(status[1]);
-    while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
+    status.writeEnd.Close();
+    WaitChild(pid);
     int        err    = 0;
-    const bool failed = ReadExecFailure(status[0], err);
-    close(status[0]);
+    const bool failed = ReadExecFailure(status.readEnd.fd, err);
     if (failed) lastError = err;
     return !failed;
 }

@@ -3,8 +3,6 @@
 #include "platform/posix/Fd.hpp"
 
 #include <csignal>
-#include <fcntl.h>
-#include <sys/wait.h>
 
 #include <string>
 #include <thread>
@@ -14,43 +12,12 @@ namespace git_tools {
 
 namespace {
 
-struct Fd {
-    int fd = -1;
-
-    ~Fd() { Close(); }
-
-    void Close() {
-        if (fd >= 0) close(fd);
-        fd = -1;
-    }
-};
-
-struct Pipe {
-    Fd readEnd;
-    Fd writeEnd;
-
-    bool Open() {
-        int fds[2];
-        if (pipe2(fds, O_CLOEXEC) != 0) return false;
-        readEnd.fd  = fds[0];
-        writeEnd.fd = fds[1];
-        return true;
-    }
-};
-
 void IgnoreBrokenPipes() {
     static const bool ignored = [] {
         std::signal(SIGPIPE, SIG_IGN);
         return true;
     }();
     (void)ignored;
-}
-
-void DrainPipe(int fd, std::string& out, const OutputSink& sink = {}) {
-    ReadAll(fd, [&](std::string_view bytes) {
-        if (sink) sink(bytes);
-        else      out.append(bytes);
-    });
 }
 
 int ExitCodeOf(int status) {
@@ -110,8 +77,7 @@ ProcessResult RunProcess(const std::wstring& executable,
     execPipe.writeEnd.Close();
     int execError = 0;
     if (ReadExecFailure(execPipe.readEnd.fd, execError)) {
-        int status = 0;
-        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        WaitChild(pid);
         result.errorMessage =
             L"failed to start " + executable + L": " + ErrorText(execError);
         return result;
@@ -132,8 +98,10 @@ ProcessResult RunProcess(const std::wstring& executable,
                 inPipe.writeEnd.Close();
             });
         }
-        std::thread tErr([&] { DrainPipe(errPipe.readEnd.fd, result.stderrText); });
-        DrainPipe(outPipe.readEnd.fd, result.stdoutText, onStdout);
+        std::thread tErr([&] {
+            ReadAll(errPipe.readEnd.fd, CollectOutput(result.stderrText));
+        });
+        ReadAll(outPipe.readEnd.fd, CollectOutput(result.stdoutText, onStdout));
         tErr.join();
         if (tIn.joinable()) tIn.join();
     }
@@ -143,9 +111,7 @@ ProcessResult RunProcess(const std::wstring& executable,
            errno == EINTR) {}
     if (cancel) cancel->Detach();
 
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    result.exitCode = ExitCodeOf(status);
+    result.exitCode = ExitCodeOf(WaitChild(pid));
     return result;
 }
 

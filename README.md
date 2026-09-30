@@ -12,9 +12,9 @@ TortoiseGit's shell extension started hanging and crashing Explorer on my machin
 - **`git pl`** - runs `git pull` with its output streaming to your terminal, then opens the log dialog if commits arrived. Silent when already up to date.
 - **`git lg`** - log dialog for any `git log` arguments (rev range, `--all`, `-n`, paths).
 - **`git br`** - branch switcher with current marker, upstream and tip subject.
-- **Log dialog** - commit list, message, and changed files with insertion and deletion counts.
-- **Diff viewer** - select one or more files to read their diffs together. Find with `Ctrl+F`, and `Ctrl+Shift+E` jumps into your editor at the matching line of the real file. Added and removed lines play a sound as you arrow through them, and `Ctrl+I` hides the `+`/`-` markers while keeping the sounds.
-- **`git diff`** - optionally opens in the diff viewer instead of the terminal pager (`gittools install-diff`, or File > Options).
+- **Log dialog** - commit list, message, and changed files with insertion and deletion counts. The changed files menu opens or copies a file's location or edits it. View > Filter by date (`Ctrl+D`) limits the list to commits between a start and/or end date (committer date); `Ctrl+Shift+D` clears it.
+- **Diff viewer** - select one or more files to read their diffs together. Find with `Ctrl+F`. `Ctrl+E` opens the file in your editor, and `Ctrl+Shift+E` opens it at the matching line of the real file. Added and removed lines play a sound as you arrow through them, and `Ctrl+I` hides the `+`/`-` markers while keeping the sounds; `Ctrl+Shift+C` still copies with markers. Long lines can be wrapped at a set width. Every command is also in the menu bar and the context menu.
+- **`git diff`** - optionally opens in gittools instead of the terminal pager (`gittools install-diff`, or File > Options): a list of the changed files with File and Edit menus, where `Enter` opens the selected files in the diff viewer (`Ctrl+A` selects all).
 - **Status bar** - shows the running git command and whether it succeeded, failed or was cancelled.
 
 ## Build
@@ -81,6 +81,8 @@ Settings live in your global git config under `gittools`. File > Options and the
 | `gittools.soundvolume` | `50` | Diff line sound volume, 0-100; `0` silences them |
 | `gittools.audiodevice` | default device | Output device id for the diff line sounds (WASAPI on Windows, PulseAudio or ALSA on Linux) |
 | `gittools.diffmarkers` | `true` | Show the `+`/`-` markers in the diff viewer; `Ctrl+I` there toggles it |
+| `gittools.linewrap` | `0` | Wrap diff viewer lines at this many characters; `0` turns wrapping off |
+| `gittools.debounce` | `250` | Milliseconds to wait after moving through commits before loading the selected commit's details; `0` loads immediately |
 | `gittools.unloadfarcommits` | `false` | Drop commits far from view in huge logs and reload them from git when needed |
 | `gittools.commitcolumns` | `subject,author,date,insertions,deletions` | Column order of the commit list; a `-` prefix hides a column. Options > Configure columns edits it |
 | `gittools.changecolumns` | `name,state,insertions,deletions` | Same for the changed files list |

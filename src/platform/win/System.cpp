@@ -45,13 +45,11 @@ std::wstring CurrentDirectory() {
 bool SpawnDetachedProcess(const std::wstring& cwd,
                           const std::wstring& executable,
                           const std::vector<std::wstring>& args) {
-    const std::wstring cmdLine = BuildCommandLine(executable, args);
-    std::vector<wchar_t> buf(cmdLine.begin(), cmdLine.end());
-    buf.push_back(L'\0');
+    std::wstring cmdLine = BuildCommandLine(executable, args);
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
+    if (!CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
                         DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr,
                         cwd.empty() ? nullptr : cwd.c_str(), &si, &pi)) {
         return false;

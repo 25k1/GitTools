@@ -4,6 +4,8 @@
 
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <string>
@@ -11,6 +13,36 @@
 #include <vector>
 
 namespace git_tools {
+
+struct Fd {
+    int fd = -1;
+
+    ~Fd() { Close(); }
+
+    void Close() {
+        if (fd >= 0) close(fd);
+        fd = -1;
+    }
+};
+
+struct Pipe {
+    Fd readEnd;
+    Fd writeEnd;
+
+    bool Open() {
+        int fds[2];
+        if (pipe2(fds, O_CLOEXEC) != 0) return false;
+        readEnd.fd  = fds[0];
+        writeEnd.fd = fds[1];
+        return true;
+    }
+};
+
+inline int WaitChild(pid_t pid) {
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    return status;
+}
 
 inline bool WriteAll(int fd, std::string_view data) {
     for (size_t offset = 0; offset < data.size();) {

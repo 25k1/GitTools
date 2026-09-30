@@ -12,18 +12,16 @@ int RunGui(std::function<int()> start);
 
 void ShowOnActiveDisplay(wxTopLevelWindow* window);
 
-void ForceForeground(wxTopLevelWindow* window);
-
 void ShowError(wxWindow* parent, const std::wstring& title,
                const std::wstring& text);
 
-void ShowInfo(wxWindow* parent, const std::wstring& title,
-              const std::wstring& text);
+int RunGuiInfo(const std::wstring& title, const std::wstring& text);
 
-inline void ShowCouldNotOpen(wxWindow* parent, const std::wstring& title,
-                             const std::wstring& path) {
-    ShowError(parent, title, L"Could not open:\n\n" + path);
-}
+int RunGuiError(const std::wstring& title, const std::wstring& text);
+
+void RevealFile(wxWindow* parent, const std::wstring& path);
+
+void EditFile(wxWindow* parent, const std::wstring& path, int line = 0);
 
 bool SetClipboardText(const std::wstring& text);
 

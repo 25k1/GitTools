@@ -1,6 +1,7 @@
 #include "git/CommitStore.hpp"
 
 #include "util/Encoding.hpp"
+#include "util/Text.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -120,11 +121,9 @@ S FormatDate(uint32_t packed) {
 }
 
 bool ParseNumber(std::string_view s, size_t pos, size_t len, unsigned& out) {
-    out = 0;
-    for (size_t i = pos; i < pos + len; ++i) {
-        if (s[i] < '0' || s[i] > '9') return false;
-        out = out * 10 + static_cast<unsigned>(s[i] - '0');
-    }
+    long long value = 0;
+    if (!ParseDigits(s.substr(pos, len), value)) return false;
+    out = static_cast<unsigned>(value);
     return true;
 }
 
@@ -212,14 +211,6 @@ Commit CommitStore::At(size_t i) const {
 
 std::wstring CommitStore::Sha(size_t i) const {
     return Hash(Locate(i));
-}
-
-bool CommitStore::Subject(size_t i, std::wstring& out) const {
-    const Located at   = Locate(i);
-    const Page&   page = pages_[at.page];
-    if (at.slot >= page.rows.size()) return false;
-    out = Utf8ToWide(SubjectText(page.rows[at.slot], Text(at)));
-    return true;
 }
 
 size_t CommitStore::IndexOf(std::wstring_view sha) const {

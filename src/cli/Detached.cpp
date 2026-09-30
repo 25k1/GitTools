@@ -26,13 +26,12 @@ int SpawnDetachedSelf(const std::wstring& subcommand,
                       const std::vector<std::wstring>& args) {
     const std::wstring exe = ExecutablePath();
     if (exe.empty()) {
-        WriteErr(L"Failed to resolve the gittools executable path.");
+        WriteErr(kNoExecutablePath);
         return 1;
     }
 
-    std::vector<std::wstring> full{subcommand, kDetachedFlag};
-    full.insert(full.end(), args.begin(), args.end());
-    if (!SpawnDetachedProcess(CurrentDirectory(), exe, full)) {
+    if (!SpawnDetachedProcess(CurrentDirectory(), exe,
+                              Concat({subcommand, kDetachedFlag}, args))) {
         WriteErr(L"Failed to spawn detached gittools process (" +
                  LastSystemError() + L").");
         return 1;

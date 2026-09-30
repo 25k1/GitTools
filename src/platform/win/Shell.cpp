@@ -163,11 +163,10 @@ bool RevealInExplorer(const std::wstring& path) {
     return Launch(L"explorer.exe", L"/select," + Quoted(path));
 }
 
-bool OpenWithEditor(const std::wstring& editor, const std::wstring& path,
-                    int line) {
+bool OpenWithEditor(const std::wstring& path, int line) {
+    const std::wstring editor = FindEditor();
     if (editor.empty()) return false;
 
-    FindEditor();
     std::wstring args = EditorCache().args;
 
     if (const size_t slot = args.find(L"%L"); slot != std::wstring::npos) {

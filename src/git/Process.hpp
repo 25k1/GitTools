@@ -68,6 +68,10 @@ private:
 
 using OutputSink = std::function<void(std::string_view)>;
 
+inline OutputSink CollectOutput(std::string& out, const OutputSink& sink = {}) {
+    return sink ? sink : OutputSink([&out](std::string_view bytes) { out.append(bytes); });
+}
+
 ProcessResult RunProcess(const std::wstring& executable,
                          const std::vector<std::wstring>& args,
                          const std::wstring& cwd,

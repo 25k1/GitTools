@@ -48,13 +48,7 @@ BranchFrame::BranchFrame(BranchWindowParams params)
     ShowBranches();
 
     list_->WhenActivated([this] { OnCheckout(); });
-    list_->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) {
-        if (IsKey(event, WXK_F5)) {
-            Reload();
-            return;
-        }
-        event.Skip();
-    });
+    BindKey(list_, WXK_F5, wxMOD_NONE, [this] { Reload(); });
     list_->SetFocus();
 }
 
@@ -63,13 +57,13 @@ void BranchFrame::OnOptionsChanged() {
 }
 
 std::wstring BranchFrame::BranchCell(long row, long column) const {
-    if (row < 0 || static_cast<size_t>(row) >= params_.branches.size()) return {};
-    const Branch& b = params_.branches[static_cast<size_t>(row)];
+    const Branch* b = RowAt(params_.branches, row);
+    if (!b) return {};
     switch (column) {
-        case kBranchName:     return b.name;
-        case kBranchState:    return b.isCurrent ? L"*" : L"";
-        case kBranchUpstream: return b.upstream;
-        case kBranchSubject:  return b.subject;
+        case kBranchName:     return b->name;
+        case kBranchState:    return b->isCurrent ? L"*" : L"";
+        case kBranchUpstream: return b->upstream;
+        case kBranchSubject:  return b->subject;
         default: return {};
     }
 }
@@ -94,14 +88,12 @@ void BranchFrame::Reload() {
 }
 
 void BranchFrame::OnCheckout() {
-    const long idx = RowWithin(list_->SelectedRow(), params_.branches.size());
-    if (idx < 0) return;
-    const Branch& b = params_.branches[static_cast<size_t>(idx)];
-    if (b.isCurrent) return;
+    const Branch* b = RowAt(params_.branches, list_->SelectedRow());
+    if (!b || b->isCurrent) return;
 
-    std::wstring target = b.name;
+    std::wstring target = b->name;
     if (const size_t slash = target.find(L'/');
-        b.isRemote && slash != std::wstring::npos) {
+        b->isRemote && slash != std::wstring::npos) {
         target.erase(0, slash + 1);
     }
     const ProcessResult r = CheckoutBranch(target, params_.cwd);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -16,6 +18,42 @@ std::basic_string<C> TrimRight(std::basic_string_view<C> s) {
     return std::basic_string<C>(s.substr(0, end == s.npos ? 0 : end + 1));
 }
 
+}
+
+template <typename C>
+bool ParseDigits(std::basic_string_view<C> s, long long& value) {
+    constexpr long long kCap = 1LL << 40;
+    value = 0;
+    for (C c : s) {
+        if (c < C('0') || c > C('9')) return false;
+        value = std::min(value * 10 + (c - C('0')), kCap);
+    }
+    return !s.empty();
+}
+
+inline bool ParseDigits(std::string_view s, long long& value) {
+    return ParseDigits<char>(s, value);
+}
+
+inline bool ParseDigits(std::wstring_view s, long long& value) {
+    return ParseDigits<wchar_t>(s, value);
+}
+
+inline bool IsOneOf(std::wstring_view s, std::span<const std::wstring_view> set) {
+    return std::ranges::find(set, s) != set.end();
+}
+
+inline bool StartsWithAny(std::wstring_view s,
+                          std::span<const std::wstring_view> prefixes) {
+    return std::ranges::any_of(prefixes, [s](std::wstring_view p) {
+        return s.starts_with(p);
+    });
+}
+
+inline std::vector<std::wstring> Concat(std::vector<std::wstring> head,
+                                        const std::vector<std::wstring>& tail) {
+    head.insert(head.end(), tail.begin(), tail.end());
+    return head;
 }
 
 inline std::string TrimRight(std::string_view s) {
@@ -48,6 +86,25 @@ void ForEachLine(std::wstring_view text, F&& fn) {
         if (eol == text.npos) return;
         pos = eol + 1;
     }
+}
+
+inline std::vector<std::wstring> SplitLines(std::wstring_view text) {
+    std::vector<std::wstring> lines;
+    ForEachLine(text, [&](std::wstring_view line) { lines.emplace_back(line); });
+    return lines;
+}
+
+inline std::vector<size_t> WrapPoints(std::wstring_view line, size_t width) {
+    std::vector<size_t> starts{0};
+    if (width == 0) return starts;
+    for (size_t start = 0; line.size() - start > width;) {
+        const size_t space = line.rfind(L' ', start + width - 1);
+        const size_t text  = line.find_first_not_of(L" \t", start);
+        const bool   word  = space != line.npos && space > start && text < space;
+        start = word ? space + 1 : start + width;
+        starts.push_back(start);
+    }
+    return starts;
 }
 
 inline std::vector<std::wstring> Split(std::wstring_view s, wchar_t delim) {

@@ -31,13 +31,11 @@ bool SetAlias(const std::wstring& name, const std::wstring& value) {
 }
 
 int RunInstallAlias() {
-    UseUtf8Console();
-
     bool ok = true;
     for (const AliasSpec& a : kAliases) {
         const std::wstring command = SelfCommand(a.subcommand);
         if (command.empty()) {
-            WriteErr(L"Failed to resolve the gittools executable path.");
+            WriteErr(kNoExecutablePath);
             return 1;
         }
         ok = SetAlias(a.name, L"!" + command) && ok;
@@ -55,7 +53,6 @@ int RunInstallAlias() {
 }
 
 int RunUninstallAlias() {
-    UseUtf8Console();
     for (const AliasSpec& a : kAliases) {
         GlobalConfigUnset(std::wstring(L"alias.") + a.name);
     }

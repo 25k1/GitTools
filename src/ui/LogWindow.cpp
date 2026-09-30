@@ -2,11 +2,12 @@
 
 #include "git/Config.hpp"
 #include "git/Git.hpp"
-#include "ui/Shell.hpp"
 
+#include "ui/Announce.hpp"
 #include "ui/App.hpp"
+#include "ui/ChangeList.hpp"
 #include "ui/Columns.hpp"
-#include "ui/DiffWindow.hpp"
+#include "ui/DateFilterDialog.hpp"
 #include "ui/ListView.hpp"
 #include "ui/ToolFrame.hpp"
 #include "ui/Widgets.hpp"
@@ -15,13 +16,9 @@
 #include <wx/timer.h>
 
 #include <algorithm>
-#include <atomic>
-#include <condition_variable>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -29,14 +26,12 @@ namespace git_tools {
 
 namespace {
 
-constexpr int kLoadDelayMs = 250;
-
-constexpr int kCmdOpenLocation = wxID_HIGHEST + 101;
-constexpr int kCmdEditFile     = wxID_HIGHEST + 102;
-constexpr int kCmdCopyHash     = wxID_HIGHEST + 111;
-constexpr int kCmdCopyMessage  = wxID_HIGHEST + 112;
-constexpr int kCmdCopyAuthor   = wxID_HIGHEST + 113;
-constexpr int kCmdCopyEmail    = wxID_HIGHEST + 114;
+struct LogWindowParams {
+    RepoContext                   repo;
+    std::wstring                  query;
+    std::vector<std::wstring>     logArgs;
+    std::unique_ptr<CommitLoader> loader;
+};
 
 bool QueryMentions(const std::wstring& query, const std::wstring& name) {
     if (name.empty()) return false;
@@ -51,36 +46,21 @@ bool QueryMentions(const std::wstring& query, const std::wstring& name) {
     return false;
 }
 
-std::wstring ComposeTitle(const LogWindowParams& p, const std::wstring& branch) {
+std::wstring DescribeDates(const DateRange& dates) {
+    std::vector<std::wstring> parts;
+    if (!dates.since.empty()) parts.push_back(L"from " + dates.since);
+    if (!dates.until.empty()) parts.push_back(L"to " + dates.until);
+    return Join(parts, L" ");
+}
+
+std::wstring ComposeTitle(const LogWindowParams& p, const DateRange& dates,
+                          const std::wstring& branch) {
     std::wstring t = L"gittools";
     if (!p.query.empty()) t += L" - " + p.query;
+    if (!dates.empty()) t += L" - " + DescribeDates(dates);
     if (!branch.empty() && !QueryMentions(p.query, branch)) t += L" - " + branch;
-    if (!p.repoRoot.empty()) t += L" - " + p.repoRoot;
+    if (!p.repo.root.empty()) t += L" - " + p.repo.root;
     return t;
-}
-
-std::wstring FormatCount(int value, bool suppressed) {
-    if (suppressed)  return L"";
-    if (value == -2) return L"bin";
-    return value < 0 ? std::wstring() : std::to_wstring(value);
-}
-
-std::wstring ChangeName(const FileChange& fc) {
-    return HasOldPath(fc.kind) && !fc.oldPath.empty()
-               ? fc.oldPath + L" -> " + fc.path
-               : fc.path;
-}
-
-std::wstring ChangeCell(const FileChange& fc, long column) {
-    switch (column) {
-        case kChangeName:  return ChangeName(fc);
-        case kChangeState: return std::wstring(1, fc.kindChar);
-        case kChangeInsertions:
-            return FormatCount(fc.insertions, fc.kind == FileChangeKind::Deleted);
-        case kChangeDeletions:
-            return FormatCount(fc.deletions, fc.kind == FileChangeKind::Added);
-        default: return {};
-    }
 }
 
 class LogFrame : public ToolFrame {
@@ -89,8 +69,9 @@ public:
     ~LogFrame() override;
 
 protected:
-    std::wstring StatusText() const override;
-    void         OnOptionsChanged() override;
+    std::vector<MenuSection> Menus() override;
+    std::wstring             StatusText() const override;
+    void                     OnOptionsChanged() override;
 
 private:
     size_t CommitCount() const { return shown_; }
@@ -99,22 +80,20 @@ private:
         return RowWithin(commits_->SelectedRow(), CommitCount());
     }
 
-    std::optional<Commit>          SelectedCommit() const;
-    std::wstring                   SelectedSha() const;
-    const FileChange*              SelectedChange() const;
-    std::vector<const FileChange*> SelectedChanges() const;
+    std::optional<Commit> SelectedCommit() const;
+    std::wstring          SelectedSha() const;
 
     std::wstring CommitCell(long row, long column) const;
     std::wstring KnownMessage(const Commit& c) const;
     std::wstring FullMessage(const Commit& c) const;
     const std::wstring* LoadedMessage(const Commit& c) const;
 
+    void UpdateTitle();
     void ShowCommitMessage();
     void ApplyCommitDetails(CommitDetails&& details);
     void ClearDetailPanes();
 
-    int  BeginDetailLoad();
-    void DispatchCommitLoad(const std::wstring& sha);
+    void BeginDetailLoad();
     void ScheduleCommitLoad();
     void ReloadSelectedCommit();
     void OnDetailLoaded(int token, const std::shared_ptr<CommitDetails>& details);
@@ -122,44 +101,39 @@ private:
     void AttachLoader();
     void AppendLoadedCommits();
     void RequestCommitsNear(long row);
-    void ReloadCommitList();
+    bool ReloadCommitList();
 
-    void WorkerLoop();
-    void StopDetailWorker();
+    void EditDateFilter();
+    void ApplyDateFilter(DateRange dates);
 
-    void OpenDiffForSelection();
-    void CopySelection(bool commits);
-    void OnListKey(bool commits, wxKeyEvent& event);
+    std::optional<ChangesDiff> DiffOfChanges(const std::vector<size_t>& rows) const;
+    void CopySelectedSha();
     void ShowCommitsContextMenu(const wxPoint& at);
-    void ShowChangesContextMenu(const wxPoint& at);
 
-    LogWindowParams params_;
-    std::wstring    branch_;
-    VirtualList*    commits_ = nullptr;
-    wxTextCtrl*     message_ = nullptr;
-    VirtualList*    changes_ = nullptr;
-    std::wstring    messageShown_;
-    size_t          shown_      = 0;
-    CommitDetails   detail_;
-    long long       insertions_ = 0;
-    long long       deletions_  = 0;
-    wxTimer         loadTimer_;
-
-    bool                    loadPending_ = false;
-    ProcessCanceller        canceller_;
-    std::thread             worker_;
-    std::mutex              mu_;
-    std::condition_variable cv_;
-    bool                    stop_       = false;
-    int                     pendingTok_ = -1;
-    std::wstring            pendingSha_;
-    std::atomic<int>        nextToken_{0};
+    LogWindowParams     params_;
+    VirtualList*        commits_ = nullptr;
+    wxTextCtrl*         message_ = nullptr;
+    ChangeList*         changes_ = nullptr;
+    std::wstring        messageShown_;
+    size_t              shown_      = 0;
+    CommitDetails       detail_;
+    long long           insertions_ = 0;
+    long long           deletions_  = 0;
+    wxTimer             loadTimer_;
+    int                 debounceMs_  = DebounceMs();
+    bool                loadPending_ = false;
+    DateRange           dates_;
+    CommitDetailsLoader detailLoader_;
 };
 
 LogFrame::LogFrame(LogWindowParams params)
-    : ToolFrame(L"", wxSize(1100, 750)), params_(std::move(params)) {
-    branch_ = QueryBranchLabel(params_.logArgs, params_.cwd);
-    SetTitle(ComposeTitle(params_, branch_));
+    : ToolFrame(L"", wxSize(1100, 750)),
+      params_(std::move(params)),
+      detailLoader_(params_.repo.root,
+                    [this](int token, std::shared_ptr<CommitDetails> details) {
+                        CallAfter([this, token, details] { OnDetailLoaded(token, details); });
+                    }) {
+    UpdateTitle();
 
     wxPanel* panel = Panel();
     AddLabel(L"&Commits");
@@ -172,14 +146,13 @@ LogFrame::LogFrame(LogWindowParams params)
     message_ = CreateReadOnlyText(panel);
     AddPane(message_, 18);
     AddLabel(L"C&hanges");
-    changes_ = new VirtualList(panel, true, kChangeColumns,
-                               [this](long row, long column) {
-        return static_cast<size_t>(row) < detail_.changes.size()
-                   ? ChangeCell(detail_.changes[static_cast<size_t>(row)], column)
-                   : std::wstring();
+    changes_ = new ChangeList(panel, params_.repo.workTree,
+                              [this](const std::vector<size_t>& rows) {
+        return DiffOfChanges(rows);
     });
     AddPane(changes_, 26);
     FinishLayout(changes_, 20);
+    PrepareAnnouncements(this);
 
     commits_->WhenSelected([this] {
         if (const long row = SelectedIndex(); row >= 0) {
@@ -188,16 +161,13 @@ LogFrame::LogFrame(LogWindowParams params)
         }
     });
     commits_->WhenRowsNeeded([this](long lastRow) { RequestCommitsNear(lastRow); });
-    commits_->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) { OnListKey(true, event); });
-    changes_->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) { OnListKey(false, event); });
-    changes_->WhenActivated([this] { OpenDiffForSelection(); });
+    BindKey(commits_, WXK_F5, wxMOD_NONE, [this] { ReloadCommitList(); });
+    BindKey(commits_, 'C', wxMOD_CONTROL, [this] { CopySelectedSha(); });
+    changes_->WhenReload([this] { ReloadSelectedCommit(); });
     commits_->WhenContextMenu([this](const wxPoint& at) { ShowCommitsContextMenu(at); });
-    changes_->WhenContextMenu([this](const wxPoint& at) { ShowChangesContextMenu(at); });
     loadTimer_.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { ReloadSelectedCommit(); });
 
     if (params_.loader) AttachLoader();
-    commits_->ResetRows(CommitCount());
-    worker_ = std::thread(&LogFrame::WorkerLoop, this);
     if (CommitCount() > 0) commits_->SelectOnly(0);
     commits_->SetFocus();
 }
@@ -205,7 +175,17 @@ LogFrame::LogFrame(LogWindowParams params)
 LogFrame::~LogFrame() {
     loadTimer_.Stop();
     params_.loader.reset();
-    StopDetailWorker();
+    detailLoader_.Stop();
+}
+
+std::vector<MenuSection> LogFrame::Menus() {
+    std::vector<MenuSection> menus = ToolFrame::Menus();
+    menus.push_back({L"&View", {
+        {L"Filter by &date...\tCtrl+D", [this] { EditDateFilter(); }},
+        {L"&Clear date filter\tCtrl+Shift+D", [this] { ApplyDateFilter({}); },
+         !dates_.empty()},
+    }});
+    return menus;
 }
 
 std::wstring LogFrame::StatusText() const {
@@ -216,6 +196,7 @@ std::wstring LogFrame::StatusText() const {
 void LogFrame::OnOptionsChanged() {
     commits_->ApplyColumnLayout();
     changes_->ApplyColumnLayout();
+    debounceMs_ = DebounceMs();
     if (params_.loader) {
         params_.loader->SetUnloadFar(ConfigGetBool(kUnloadFarCommitsKey, false));
     }
@@ -230,21 +211,6 @@ std::optional<Commit> LogFrame::SelectedCommit() const {
 std::wstring LogFrame::SelectedSha() const {
     const long i = SelectedIndex();
     return (i < 0) ? std::wstring() : params_.loader->Sha(static_cast<size_t>(i));
-}
-
-const FileChange* LogFrame::SelectedChange() const {
-    const long i = RowWithin(changes_->SelectedRow(), detail_.changes.size());
-    return (i < 0) ? nullptr : &detail_.changes[static_cast<size_t>(i)];
-}
-
-std::vector<const FileChange*> LogFrame::SelectedChanges() const {
-    std::vector<const FileChange*> out;
-    for (long i : changes_->SelectedRows()) {
-        if (static_cast<size_t>(i) < detail_.changes.size()) {
-            out.push_back(&detail_.changes[static_cast<size_t>(i)]);
-        }
-    }
-    return out;
 }
 
 std::wstring LogFrame::CommitCell(long row, long column) const {
@@ -278,8 +244,13 @@ std::wstring LogFrame::KnownMessage(const Commit& c) const {
 
 std::wstring LogFrame::FullMessage(const Commit& c) const {
     if (const std::wstring* loaded = LoadedMessage(c)) return *loaded;
-    std::wstring message = LoadCommitMessage(c.fullSha, params_.repoRoot);
+    std::wstring message = LoadCommitMessage(c.fullSha, params_.repo.root);
     return message.empty() ? c.subject : message;
+}
+
+void LogFrame::UpdateTitle() {
+    SetTitle(ComposeTitle(params_, dates_,
+                          QueryBranchLabel(params_.logArgs, params_.repo.cwd)));
 }
 
 void LogFrame::ShowCommitMessage() {
@@ -295,57 +266,49 @@ void LogFrame::ApplyCommitDetails(CommitDetails&& details) {
     detail_ = std::move(details);
     ShowCommitMessage();
 
-    changes_->ResetRows(detail_.changes.size());
-
     insertions_ = 0;
     deletions_  = 0;
     for (const FileChange& fc : detail_.changes) {
         insertions_ += std::max(fc.insertions, 0);
         deletions_  += std::max(fc.deletions, 0);
     }
+    changes_->SetChanges(std::move(detail_.changes));
     if (const long row = SelectedIndex(); row >= 0) commits_->RefreshRow(row);
 }
 
 void LogFrame::ClearDetailPanes() {
-    detail_.changes.clear();
-    changes_->ResetRows(0);
+    changes_->SetChanges({});
     ShowCommitMessage();
 }
 
-int LogFrame::BeginDetailLoad() {
-    const int token = ++nextToken_;
-    canceller_.Cancel();
+void LogFrame::BeginDetailLoad() {
+    detailLoader_.Invalidate();
     loadPending_ = true;
     RefreshStatus();
-    return token;
-}
-
-void LogFrame::DispatchCommitLoad(const std::wstring& sha) {
-    const int token = BeginDetailLoad();
-    {
-        std::lock_guard lock(mu_);
-        pendingTok_ = token;
-        pendingSha_ = sha;
-    }
-    cv_.notify_one();
 }
 
 void LogFrame::ScheduleCommitLoad() {
-    BeginDetailLoad();
     ClearDetailPanes();
-    loadTimer_.StartOnce(kLoadDelayMs);
+    if (debounceMs_ <= 0) {
+        loadTimer_.Stop();
+        ReloadSelectedCommit();
+        return;
+    }
+    BeginDetailLoad();
+    loadTimer_.StartOnce(debounceMs_);
 }
 
 void LogFrame::ReloadSelectedCommit() {
     ShowCommitMessage();
     if (const std::wstring sha = SelectedSha(); !sha.empty()) {
-        DispatchCommitLoad(sha);
+        BeginDetailLoad();
+        detailLoader_.Load(sha);
     }
 }
 
 void LogFrame::OnDetailLoaded(int token,
                               const std::shared_ptr<CommitDetails>& details) {
-    if (token != nextToken_.load()) return;
+    if (!detailLoader_.IsCurrent(token)) return;
     ApplyCommitDetails(std::move(*details));
     loadPending_ = false;
     RefreshStatus();
@@ -354,6 +317,7 @@ void LogFrame::OnDetailLoaded(int token,
 void LogFrame::AttachLoader() {
     shown_ = params_.loader->AcknowledgeCount();
     params_.loader->Notify([this] { CallAfter([this] { AppendLoadedCommits(); }); });
+    commits_->ResetRows(shown_);
 }
 
 void LogFrame::AppendLoadedCommits() {
@@ -372,167 +336,86 @@ void LogFrame::RequestCommitsNear(long row) {
     }
 }
 
-void LogFrame::ReloadCommitList() {
-    branch_ = QueryBranchLabel(params_.logArgs, params_.cwd);
-    SetTitle(ComposeTitle(params_, branch_));
+bool LogFrame::ReloadCommitList() {
+    UpdateTitle();
 
     const long         keepRow = SelectedIndex();
     const std::wstring keepSha = SelectedSha();
 
     CommitListResult lr = StartCommitLog(
-        params_.logArgs, params_.cwd,
+        WithDateRange(params_.logArgs, dates_), params_.repo.cwd,
         static_cast<size_t>(keepRow + 1) + kCommitPage);
     if (!lr.errorMessage.empty()) {
         ShowError(this, L"Reload failed", lr.errorMessage);
-        return;
+        return false;
     }
     params_.loader = std::move(lr.loader);
     AttachLoader();
-    commits_->ResetRows(shown_);
 
     if (shown_ == 0) {
         ClearDetailPanes();
-        return;
+        return true;
     }
 
     const size_t found = params_.loader->IndexOf(keepSha);
     const long   row   = (found < shown_) ? static_cast<long>(found) : 0;
     commits_->SelectOnly(row);
     ReloadSelectedCommit();
+    return true;
 }
 
-void LogFrame::WorkerLoop() {
-    for (;;) {
-        int          token;
-        std::wstring sha;
-        {
-            std::unique_lock lock(mu_);
-            cv_.wait(lock, [this] { return stop_ || pendingTok_ >= 0; });
-            if (stop_) return;
-            token = std::exchange(pendingTok_, -1);
-            sha   = pendingSha_;
-        }
+void LogFrame::EditDateFilter() {
+    DateRange dates = dates_;
+    if (ShowDateFilterDialog(this, dates)) ApplyDateFilter(std::move(dates));
+}
 
-        canceller_.Reset();
-        auto details = std::make_shared<CommitDetails>(
-            LoadCommitDetails(sha, params_.repoRoot, &canceller_));
-        std::lock_guard lock(mu_);
-        if (stop_) return;
-        CallAfter([this, token, details] { OnDetailLoaded(token, details); });
+void LogFrame::ApplyDateFilter(DateRange dates) {
+    if (dates == dates_) return;
+    std::swap(dates_, dates);
+    if (!ReloadCommitList()) {
+        dates_ = std::move(dates);
+        UpdateTitle();
+        return;
     }
+    if (CommitCount() == 0) Announce(commits_, L"No commits in the selected date range");
 }
 
-void LogFrame::StopDetailWorker() {
-    {
-        std::lock_guard lock(mu_);
-        stop_ = true;
-    }
-    canceller_.Cancel();
-    cv_.notify_all();
-    if (worker_.joinable()) worker_.join();
-}
-
-void LogFrame::OpenDiffForSelection() {
-    const std::vector<const FileChange*> selection = SelectedChanges();
+std::optional<ChangesDiff> LogFrame::DiffOfChanges(
+    const std::vector<size_t>& rows) const {
     const std::optional<Commit> c = SelectedCommit();
-    if (selection.empty() || !c) return;
+    if (!c) return std::nullopt;
 
     std::vector<std::wstring> paths;
-    for (const FileChange* fc : selection) {
-        paths.push_back(fc->path);
-        if (!fc->oldPath.empty() && fc->oldPath != fc->path) {
-            paths.push_back(fc->oldPath);
+    for (size_t row : rows) {
+        const FileChange& fc = changes_->Changes()[row];
+        paths.push_back(fc.path);
+        if (!fc.oldPath.empty() && fc.oldPath != fc.path) {
+            paths.push_back(fc.oldPath);
         }
     }
-
-    DiffWindowParams p;
-    p.title = L"Diff: " +
-              (selection.size() == 1 ? selection.front()->path
-                                     : std::to_wstring(selection.size()) +
-                                           L" files") +
-              L" - " + c->shortSha;
-    p.diffText = SeparateFileDiffs(
-        LoadFilesDiff(c->fullSha, paths, params_.repoRoot));
-    p.workTree = params_.workTree;
-    ShowDiffWindow(this, p);
+    return ChangesDiff{LoadFilesDiff(c->fullSha, paths, params_.repo.root),
+                       c->shortSha};
 }
 
-void LogFrame::CopySelection(bool commits) {
-    std::wstring text;
-    if (commits) {
-        text = SelectedSha();
-    } else {
-        std::vector<std::wstring> paths;
-        for (const FileChange* fc : SelectedChanges()) paths.push_back(fc->path);
-        text = Join(paths, L"\r\n");
-    }
-    if (!text.empty()) SetClipboardText(text);
-}
-
-void LogFrame::OnListKey(bool commits, wxKeyEvent& event) {
-    if (!commits && IsKey(event, 'A', wxMOD_CONTROL)) {
-        changes_->SelectAllRows();
-    } else if (IsKey(event, WXK_F5)) {
-        if (commits) ReloadCommitList();
-        else         ReloadSelectedCommit();
-    } else if (IsKey(event, 'C', wxMOD_CONTROL)) {
-        CopySelection(commits);
-    } else {
-        event.Skip();
-    }
+void LogFrame::CopySelectedSha() {
+    if (const std::wstring sha = SelectedSha(); !sha.empty()) SetClipboardText(sha);
 }
 
 void LogFrame::ShowCommitsContextMenu(const wxPoint& at) {
     const std::optional<Commit> c = SelectedCommit();
     if (!c) return;
 
-    switch (ChooseFromMenu(commits_, at, {
-                {kCmdCopyHash,    L"Copy &hash"},
-                {kCmdCopyMessage, L"Copy commit &message"},
-                {kCmdCopyAuthor,  L"Copy &author"},
-                {kCmdCopyEmail,   L"Copy author &email"},
-            })) {
-        case kCmdCopyHash:
-            SetClipboardText(c->fullSha);
-            break;
-        case kCmdCopyMessage:
-            SetClipboardText(FullMessage(*c));
-            break;
-        case kCmdCopyAuthor:
-            SetClipboardText(c->authorEmail.empty()
-                                 ? c->author
-                                 : c->author + L" <" + c->authorEmail + L">");
-            break;
-        case kCmdCopyEmail:
-            SetClipboardText(c->authorEmail);
-            break;
-    }
-}
-
-void LogFrame::ShowChangesContextMenu(const wxPoint& at) {
-    const FileChange* fc = SelectedChange();
-    if (!fc) return;
-
-    const std::wstring path   = RepoFilePath(params_.workTree, fc->path);
-    const std::wstring editor = FindEditor();
-
-    switch (ChooseFromMenu(changes_, at, {
-                {kCmdOpenLocation, L"&Open file location",
-                 PathExists(ParentDirectory(path))},
-                {kCmdEditFile, editor.empty() ? nullptr : L"&Edit file",
-                 PathExists(path)},
-            })) {
-        case kCmdOpenLocation:
-            if (!RevealInExplorer(path)) {
-                ShowCouldNotOpen(this, L"Open file location", path);
-            }
-            break;
-        case kCmdEditFile:
-            if (!OpenWithEditor(editor, path)) {
-                ShowCouldNotOpen(this, L"Edit file", path);
-            }
-            break;
-    }
+    const auto copy = [](std::wstring text) {
+        return [text = std::move(text)] { SetClipboardText(text); };
+    };
+    ShowPopupMenu(commits_, at, {
+        {L"Copy &hash", copy(c->fullSha)},
+        {L"Copy commit &message", [this, &c] { SetClipboardText(FullMessage(*c)); }},
+        {L"Copy &author", copy(c->authorEmail.empty()
+                                   ? c->author
+                                   : c->author + L" <" + c->authorEmail + L">")},
+        {L"Copy author &email", copy(c->authorEmail)},
+    });
 }
 
 }
@@ -540,18 +423,8 @@ void LogFrame::ShowChangesContextMenu(const wxPoint& at) {
 int ShowLogWindow(const RepoContext& repo, std::wstring query,
                   std::vector<std::wstring> logArgs,
                   CommitListResult log) {
-    LogWindowParams p;
-    p.query    = std::move(query);
-    p.repoRoot = repo.root;
-    p.workTree = repo.workTree;
-    p.cwd      = repo.cwd;
-    p.logArgs  = std::move(logArgs);
-    p.loader   = std::move(log.loader);
-    return ShowLogWindow(std::move(p));
-}
-
-int ShowLogWindow(LogWindowParams params) {
-    ShowOnActiveDisplay(new LogFrame(std::move(params)));
+    ShowOnActiveDisplay(new LogFrame(
+        {repo, std::move(query), std::move(logArgs), std::move(log.loader)}));
     return 0;
 }
 

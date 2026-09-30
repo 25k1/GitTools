@@ -84,10 +84,6 @@ wxString VirtualList::OnGetItemText(long item, long column) const {
     return text_(item, static_cast<long>(shown_[static_cast<size_t>(column)]));
 }
 
-size_t VirtualList::RowCount() const {
-    return static_cast<size_t>(GetItemCount());
-}
-
 void VirtualList::SetRowCount(size_t count) {
     SetItemCount(static_cast<long>(count));
 }

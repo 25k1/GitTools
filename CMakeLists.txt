@@ -275,7 +275,6 @@ set(GITTOOLS_WX_OFF
     wxUSE_BITMAPCOMBOBOX
     wxUSE_BMPBUTTON
     wxUSE_BUSYINFO
-    wxUSE_CALENDARCTRL
     wxUSE_CHECKLISTBOX
     wxUSE_CHOICEBOOK
     wxUSE_CHOICEDLG
@@ -283,15 +282,11 @@ set(GITTOOLS_WX_OFF
     wxUSE_COLLPANE
     wxUSE_COLOURDLG
     wxUSE_COLOURPICKERCTRL
-    wxUSE_COMBOBOX
-    wxUSE_COMBOCTRL
     wxUSE_COMMANDLINKBUTTON
     wxUSE_CONFIG
     wxUSE_CONSTRAINTS
     wxUSE_CRASHREPORT
     wxUSE_CREDENTIALDLG
-    wxUSE_DATEPICKCTRL
-    wxUSE_DATETIME
     wxUSE_DBGHELP
     wxUSE_DC_TRANSFORM_MATRIX
     wxUSE_DEBUGREPORT
@@ -336,7 +331,6 @@ set(GITTOOLS_WX_OFF
     wxUSE_LIBTIFF
     wxUSE_LIBWEBP
     wxUSE_LISTBOOK
-    wxUSE_LISTBOX
     wxUSE_LOG_DIALOG
     wxUSE_LOGGUI
     wxUSE_LOGWINDOW
@@ -386,8 +380,6 @@ set(GITTOOLS_WX_OFF
     wxUSE_SNGLINST_CHECKER
     wxUSE_SOCKETS
     wxUSE_SOUND
-    wxUSE_SPINBTN
-    wxUSE_SPINCTRL
     wxUSE_SPLASH
     wxUSE_SPLITTER
     wxUSE_STACKWALKER
@@ -427,7 +419,16 @@ set(GITTOOLS_WX_OFF
     wxUSE_ZIPSTREAM
     wxUSE_ZLIB
 )
-set(GITTOOLS_WX_ON)
+set(GITTOOLS_WX_ON
+    wxUSE_CALENDARCTRL
+    wxUSE_COMBOBOX
+    wxUSE_COMBOCTRL
+    wxUSE_DATEPICKCTRL
+    wxUSE_DATETIME
+    wxUSE_LISTBOX
+    wxUSE_SPINBTN
+    wxUSE_SPINCTRL
+)
 if(WIN32)
     list(APPEND GITTOOLS_WX_OFF
         wxUSE_DATAVIEWCTRL
@@ -489,15 +490,20 @@ add_executable(gittools
     src/cli/PullLog.cpp
     src/git/CommitStore.cpp
     src/git/Config.cpp
+    src/git/Diff.cpp
     src/git/Git.cpp
     src/git/Transcript.cpp
     src/ui/App.cpp
     src/ui/BranchWindow.cpp
+    src/ui/ChangeList.cpp
     src/ui/Columns.cpp
     src/ui/ColumnsDialog.cpp
+    src/ui/DateFilterDialog.cpp
+    src/ui/DiffListWindow.cpp
     src/ui/DiffWindow.cpp
     src/ui/FindDialog.cpp
     src/ui/LogWindow.cpp
+    src/ui/MenuFrame.cpp
     src/ui/OptionsDialog.cpp
     src/ui/ToolFrame.cpp
     src/ui/Widgets.cpp

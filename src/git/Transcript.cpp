@@ -25,6 +25,13 @@ TranscriptState& State() {
     return state;
 }
 
+template <typename F>
+auto Locked(F&& f) {
+    TranscriptState& s = State();
+    std::lock_guard lock(s.mu);
+    return f(s);
+}
+
 void AppendNormalized(std::wstring& dst, std::wstring_view src) {
     dst += NormalizeCRLF(src.substr(0, kMaxEntryChars));
     if (src.size() > kMaxEntryChars) dst += L"\r\n... (output truncated)\r\n";
@@ -35,25 +42,23 @@ std::wstring CommandName(const std::vector<std::wstring>& args) {
 }
 
 void Publish(const std::wstring& entry, const std::wstring& status) {
-    TranscriptState& s = State();
-    std::lock_guard lock(s.mu);
-    s.text  += entry;
-    s.total += entry.size();
-    if (s.text.size() > kMaxChars) {
-        const size_t cut = s.text.size() - kMaxChars;
-        const size_t nl  = s.text.find(L'\n', cut);
-        s.text.erase(0, nl == std::wstring::npos ? cut : nl + 1);
-    }
-    s.status = status;
-    if (s.listener) s.listener();
+    Locked([&](TranscriptState& s) {
+        s.text  += entry;
+        s.total += entry.size();
+        if (s.text.size() > kMaxChars) {
+            const size_t cut = s.text.size() - kMaxChars;
+            const size_t nl  = s.text.find(L'\n', cut);
+            s.text.erase(0, nl == std::wstring::npos ? cut : nl + 1);
+        }
+        s.status = status;
+        if (s.listener) s.listener();
+    });
 }
 
 }
 
 void SetTranscriptListener(std::function<void()> listener) {
-    TranscriptState& s = State();
-    std::lock_guard lock(s.mu);
-    s.listener = std::move(listener);
+    Locked([&](TranscriptState& s) { s.listener = std::move(listener); });
 }
 
 void NoteGitStart(const std::vector<std::wstring>& args) {
@@ -80,24 +85,22 @@ void RecordGitCancelled(const std::vector<std::wstring>& args) {
 }
 
 TranscriptChunk TranscriptSince(unsigned long long& cursor) {
-    TranscriptState& s = State();
-    std::lock_guard lock(s.mu);
-    TranscriptChunk chunk;
-    const unsigned long long base = s.total - s.text.size();
-    if (cursor < base) {
-        chunk.reset = true;
-        chunk.text  = s.text;
-    } else {
-        chunk.text = s.text.substr(static_cast<size_t>(cursor - base));
-    }
-    cursor = s.total;
-    return chunk;
+    return Locked([&](TranscriptState& s) {
+        TranscriptChunk chunk;
+        const unsigned long long base = s.total - s.text.size();
+        if (cursor < base) {
+            chunk.reset = true;
+            chunk.text  = s.text;
+        } else {
+            chunk.text = s.text.substr(static_cast<size_t>(cursor - base));
+        }
+        cursor = s.total;
+        return chunk;
+    });
 }
 
 std::wstring TranscriptStatus() {
-    TranscriptState& s = State();
-    std::lock_guard lock(s.mu);
-    return s.status;
+    return Locked([](TranscriptState& s) { return s.status; });
 }
 
 }

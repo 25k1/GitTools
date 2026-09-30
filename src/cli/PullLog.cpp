@@ -10,7 +10,7 @@ namespace git_tools {
 namespace {
 
 std::wstring HeadSha(const std::wstring& cwd) {
-    return TrimmedOutput(RunGit({L"rev-parse", L"HEAD"}, cwd));
+    return GitOutput({L"rev-parse", L"HEAD"}, cwd);
 }
 
 }
@@ -25,9 +25,8 @@ int RunPullLog(int argc, wchar_t** argv) {
     const std::wstring cwd    = CurrentDirectory();
     const std::wstring oldSha = HeadSha(cwd);
 
-    std::vector<std::wstring> args = ArgsFrom(argc, argv, 2);
-    args.insert(args.begin(), L"pull");
-    ProcessResult pull = RunGit(args, cwd, StdioMode::Inherit);
+    const ProcessResult pull =
+        RunGit(Concat({L"pull"}, ArgsFrom(argc, argv, 2)), cwd, StdioMode::Inherit);
     if (!pull.started) return 1;
     if (pull.exitCode != 0) return pull.exitCode;
 

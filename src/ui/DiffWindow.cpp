@@ -1,8 +1,8 @@
 #include "audio/Audio.hpp"
 #include "git/Config.hpp"
+#include "git/Diff.hpp"
 #include "ui/Shell.hpp"
 #include "util/Encoding.hpp"
-#include "util/System.hpp"
 #include "util/Text.hpp"
 
 #include "ui/DiffWindow.hpp"
@@ -10,9 +10,9 @@
 #include "ui/Announce.hpp"
 #include "ui/App.hpp"
 #include "ui/FindDialog.hpp"
+#include "ui/MenuFrame.hpp"
 #include "ui/Widgets.hpp"
 
-#include <wx/dialog.h>
 #include <wx/font.h>
 #include <wx/sizer.h>
 #include <wx/utils.h>
@@ -24,159 +24,6 @@ namespace git_tools {
 
 namespace {
 
-struct DiffLocation {
-    std::wstring path;
-    int          line = 0;
-    std::wstring content;
-};
-
-std::vector<std::wstring> SplitLines(std::wstring_view text) {
-    std::vector<std::wstring> lines;
-    ForEachLine(text, [&](std::wstring_view line) { lines.emplace_back(line); });
-    return lines;
-}
-
-double Similarity(const std::wstring& a, const std::wstring& b) {
-    const size_t n = std::min<size_t>(a.size(), 256);
-    const size_t m = std::min<size_t>(b.size(), 256);
-    if (n == 0 || m == 0) return (n == m) ? 1.0 : 0.0;
-
-    std::vector<int> prev(m + 1);
-    std::vector<int> cur(m + 1);
-    for (size_t j = 0; j <= m; ++j) prev[j] = static_cast<int>(j);
-    for (size_t i = 1; i <= n; ++i) {
-        cur[0] = static_cast<int>(i);
-        for (size_t j = 1; j <= m; ++j) {
-            const int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
-            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
-        }
-        prev.swap(cur);
-    }
-    return 1.0 - static_cast<double>(prev[m]) /
-                     static_cast<double>(std::max(n, m));
-}
-
-int MatchLineInFile(const std::vector<std::wstring>& lines,
-                    const std::wstring& needle, int estimate) {
-    if (lines.empty() || needle.empty()) return 0;
-
-    const int count  = static_cast<int>(lines.size());
-    const int center = std::min(std::max(estimate, 1) - 1, count - 1);
-
-    for (int step = 0; step < count; ++step) {
-        const int before = center - step;
-        const int after  = center + step;
-        if (before >= 0 && lines[before] == needle) return before + 1;
-        if (after != before && after < count && lines[after] == needle) {
-            return after + 1;
-        }
-        if (before < 0 && after >= count) break;
-    }
-
-    constexpr int    kWindow   = 300;
-    constexpr double kMinScore = 0.6;
-    double best     = 0.0;
-    int    bestLine = 0;
-    for (int step = 0; step <= kWindow; ++step) {
-        for (int side : {-1, 1}) {
-            const int i = center + side * step;
-            if ((step == 0 && side > 0) || i < 0 || i >= count) continue;
-            if (const double score = Similarity(lines[i], needle); score > best) {
-                best     = score;
-                bestLine = i + 1;
-            }
-        }
-    }
-    return (best >= kMinScore) ? bestLine : 0;
-}
-
-int LeadingNumber(std::wstring_view s) {
-    int value = 0;
-    for (wchar_t c : s) {
-        if (c < L'0' || c > L'9') break;
-        value = value * 10 + (c - L'0');
-    }
-    return value;
-}
-
-bool IsDiffBodyLine(std::wstring_view line, bool includeRemoved) {
-    return !line.empty() &&
-           (line[0] == L' ' || line[0] == L'+' ||
-            (includeRemoved && line[0] == L'-'));
-}
-
-DiffLocation LocateInDiff(std::wstring_view text, long caretLine) {
-    DiffLocation loc;
-    long index   = 0;
-    int  newLine = 0;
-    bool inHunk  = false;
-
-    ForEachLine(text, [&](std::wstring_view line) {
-        bool content = false;
-        if (line.starts_with(L"diff --git ")) {
-            inHunk = false;
-            const size_t marker = line.rfind(L" b/");
-            loc.path = marker == line.npos ? std::wstring()
-                                           : std::wstring(line.substr(marker + 3));
-        } else if (line.starts_with(L"@@")) {
-            if (const size_t plus = line.find(L'+'); plus != line.npos) {
-                newLine = LeadingNumber(line.substr(plus + 1));
-                inHunk  = true;
-            }
-        } else if (!inHunk) {
-            if (line.starts_with(L"+++ ")) {
-                std::wstring_view p = line.substr(4);
-                if (p.starts_with(L"b/")) p.remove_prefix(2);
-                loc.path = p == L"/dev/null" ? std::wstring() : std::wstring(p);
-            }
-        } else {
-            content = true;
-        }
-
-        if (index++ == caretLine) {
-            if (inHunk) {
-                loc.line = newLine;
-                if (IsDiffBodyLine(line, true)) loc.content = line.substr(1);
-            }
-            return false;
-        }
-        if (content && (line.empty() || IsDiffBodyLine(line, false))) ++newLine;
-        return true;
-    });
-    return loc;
-}
-
-std::wstring StripDiffMarkers(std::wstring_view text) {
-    std::wstring out;
-    out.reserve(text.size());
-    size_t width = 0;
-    for (size_t pos = 0; pos < text.size();) {
-        const size_t      eol  = text.find(L'\n', pos);
-        const size_t      next = eol == text.npos ? text.size() : eol + 1;
-        std::wstring_view line = text.substr(pos, next - pos);
-        pos = next;
-        if (line.starts_with(L"diff --git ")) {
-            width = 0;
-        } else if (line.starts_with(L"@@")) {
-            const size_t ats = line.find_first_not_of(L'@');
-            width = ats == line.npos ? 0 : ats - 1;
-        } else if (width > 0 && line.size() >= width &&
-                   line.substr(0, width).find_first_not_of(L" +-") == line.npos) {
-            line.remove_prefix(width);
-        }
-        out += line;
-    }
-    return out;
-}
-
-std::wstring LineMarkers(std::wstring_view text) {
-    std::wstring markers;
-    ForEachLine(text, [&](std::wstring_view line) {
-        markers += line.empty() ? L' ' : line[0];
-    });
-    return markers;
-}
-
 bool IsCaretMoveKey(int key) {
     switch (key) {
         case WXK_UP: case WXK_DOWN: case WXK_LEFT: case WXK_RIGHT:
@@ -187,41 +34,76 @@ bool IsCaretMoveKey(int key) {
     }
 }
 
-class DiffDialog : public wxDialog {
+struct DisplayLine {
+    size_t source = 0;
+    size_t start  = 0;
+};
+
+struct SourcePos {
+    size_t line   = 0;
+    size_t column = 0;
+};
+
+class DiffFrame : public MenuFrame {
 public:
-    DiffDialog(wxWindow* owner, const DiffWindowParams& params);
+    DiffFrame(wxWindow* owner, const DiffWindowParams& params);
+    ~DiffFrame() override;
+
+protected:
+    std::vector<MenuSection> Menus() override;
+    void                     OnOptionsChanged() override;
 
 private:
-    bool CaretXY(long& column, long& line) const;
-    long CaretLine() const;
+    bool   CaretXY(long& column, long& line) const;
+    long   CaretLine() const;
+    bool   CaretSource(SourcePos& pos) const;
+    size_t Hidden(size_t line) const;
+    bool   ToSource(long position, SourcePos& pos) const;
+    long   FromSource(const SourcePos& pos) const;
+    size_t SourceColumn(const SourcePos& pos, bool withMarkers) const;
+    bool   HasSelection() const;
+    MenuEntries CopyEntries();
+    MenuEntries EditorEntries();
     void ShowDiffText();
+    void Rerender(bool markers, size_t wrapWidth);
     void ToggleMarkers();
     void GoHome();
     void CheckCaretLineAndPlay();
     const std::wstring& FoldedText();
     bool FindInDiff(bool forward);
+    void FindAgain(bool forward);
     void OpenFindDialog();
-    void OpenEditorAtCaret();
+    bool EditableFileAtCaret(DiffLocation& loc, std::wstring& path) const;
+    void OpenEditor(bool atLine);
+    void CopyText(bool withMarkers);
+    void ShowContextMenu(wxPoint at);
     void OnKeyDown(wxKeyEvent& event);
 
-    const DiffWindowParams& params_;
-    wxTextCtrl*             edit_     = nullptr;
-    long                    lastLine_ = -1;
-    bool                    markers_  = true;
-    std::wstring            lineMarkers_;
-    std::wstring            text_;
-    std::wstring            folded_;
-    FindParams              find_;
+    std::wstring              diff_;
+    std::wstring              workTree_;
+    std::vector<FileDiff>     files_;
+    wxTextCtrl*               edit_      = nullptr;
+    long                      lastLine_  = -1;
+    bool                      markers_   = true;
+    size_t                    wrapWidth_ = 0;
+    std::vector<std::wstring> source_;
+    std::vector<size_t>       markerWidths_;
+    std::vector<DisplayLine>  layout_;
+    std::wstring              text_;
+    std::wstring              folded_;
+    FindParams                find_;
 };
 
-DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
-    : wxDialog(owner, wxID_ANY, params.title, wxDefaultPosition, wxDefaultSize,
-               wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMINIMIZE_BOX |
-                   wxMAXIMIZE_BOX),
-      params_(params) {
+DiffFrame::DiffFrame(wxWindow* owner, const DiffWindowParams& params)
+    : MenuFrame(owner, params.title, wxSize(1030, 780)),
+      diff_(SeparateFileDiffs(params.diffText)),
+      workTree_(params.workTree),
+      files_(SplitFileDiffs(diff_)) {
     find_.wrapAround = ConfigGetBool(kWrapAroundKey, false);
     markers_         = ConfigGetBool(kDiffMarkersKey, true);
-    lineMarkers_     = LineMarkers(params_.diffText);
+    wrapWidth_       = static_cast<size_t>(LineWrapWidth());
+    source_          = SplitLines(NormalizeLF(diff_));
+    markerWidths_    = MarkerWidths(source_);
     PrepareSounds({Sound::LineInserted, Sound::LineDeleted});
 
     edit_ = CreateReadOnlyText(this, wxTE_DONTWRAP | wxHSCROLL | wxTE_PROCESS_TAB);
@@ -236,12 +118,13 @@ DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(edit_, 1, wxEXPAND);
     SetSizer(sizer);
-    SetSize(FromDIP(wxSize(1030, 780)));
-    CentreOnParent();
 
-    CloseOnEscape(this, [this] { EndModal(wxID_CANCEL); });
+    BuildMenus();
     PrepareAnnouncements(this);
-    edit_->Bind(wxEVT_KEY_DOWN, &DiffDialog::OnKeyDown, this);
+    edit_->Bind(wxEVT_KEY_DOWN, &DiffFrame::OnKeyDown, this);
+    edit_->Bind(wxEVT_CONTEXT_MENU, [this](wxContextMenuEvent& event) {
+        ShowContextMenu(event.GetPosition());
+    });
     edit_->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& event) {
         event.Skip();
         CallAfter([this] { CheckCaretLineAndPlay(); });
@@ -249,43 +132,144 @@ DiffDialog::DiffDialog(wxWindow* owner, const DiffWindowParams& params)
     edit_->SetFocus();
 }
 
-bool DiffDialog::CaretXY(long& column, long& line) const {
+DiffFrame::~DiffFrame() {
+    CloseAudio();
+}
+
+std::vector<MenuSection> DiffFrame::Menus() {
+    return {
+        {L"&File", WithFileCommands(EditorEntries())},
+        {L"&Edit", AppendGroup(CopyEntries(), {
+            {L"&Find...\tCtrl+F", [this] { OpenFindDialog(); }},
+            {L"Find &next\tF3", [this] { FindAgain(true); }},
+            {L"Find &previous\tShift+F3", [this] { FindAgain(false); }},
+        })},
+        {L"&View", {
+            {L"Show + and - &markers\tCtrl+I", [this] { ToggleMarkers(); }, true, true,
+             markers_},
+        }},
+    };
+}
+
+void DiffFrame::OnOptionsChanged() {
+    const bool   markers = ConfigGetBool(kDiffMarkersKey, true);
+    const size_t wrap    = static_cast<size_t>(LineWrapWidth());
+    if (markers != markers_ || wrap != wrapWidth_) Rerender(markers, wrap);
+}
+
+bool DiffFrame::HasSelection() const {
+    const auto [from, to] = TextSelection(edit_);
+    return from != to;
+}
+
+MenuEntries DiffFrame::CopyEntries() {
+    return {
+        {L"&Copy\tCtrl+C", [this] { CopyText(markers_); }, HasSelection()},
+        {L"Copy with &markers\tCtrl+Shift+C", [this] { CopyText(true); }},
+        {L"Select &all\tCtrl+A", [this] { edit_->SelectAll(); }},
+    };
+}
+
+MenuEntries DiffFrame::EditorEntries() {
+    DiffLocation loc;
+    std::wstring path;
+    const bool   canEdit = EditableFileAtCaret(loc, path);
+    return {
+        {L"Open &file in editor\tCtrl+E", [this] { OpenEditor(false); }, canEdit},
+        {L"Open editor on current &line\tCtrl+Shift+E", [this] { OpenEditor(true); },
+         canEdit},
+    };
+}
+
+bool DiffFrame::CaretXY(long& column, long& line) const {
     return edit_->PositionToXY(edit_->GetInsertionPoint(), &column, &line);
 }
 
-long DiffDialog::CaretLine() const {
+long DiffFrame::CaretLine() const {
     long column = 0;
     long line   = 0;
     return CaretXY(column, line) ? line : -1;
 }
 
-void DiffDialog::ShowDiffText() {
-    text_ = markers_ ? NativeLineEnds(params_.diffText)
-                     : NativeLineEnds(StripDiffMarkers(params_.diffText));
+bool DiffFrame::CaretSource(SourcePos& pos) const {
+    return ToSource(edit_->GetInsertionPoint(), pos);
+}
+
+size_t DiffFrame::Hidden(size_t line) const {
+    return markers_ || line >= markerWidths_.size() ? 0 : markerWidths_[line];
+}
+
+bool DiffFrame::ToSource(long position, SourcePos& pos) const {
+    long column = 0;
+    long line   = 0;
+    if (!edit_->PositionToXY(position, &column, &line) || line < 0 ||
+        static_cast<size_t>(line) >= layout_.size()) {
+        return false;
+    }
+    const DisplayLine& shown = layout_[static_cast<size_t>(line)];
+    pos = {shown.source, shown.start + static_cast<size_t>(std::max(column, 0L))};
+    return true;
+}
+
+long DiffFrame::FromSource(const SourcePos& pos) const {
+    auto it = std::ranges::lower_bound(layout_, pos.line, {}, &DisplayLine::source);
+    if (it == layout_.end() || it->source != pos.line) return -1;
+    while (it + 1 != layout_.end() && (it + 1)->source == pos.line &&
+           (it + 1)->start <= pos.column) {
+        ++it;
+    }
+    const long line  = static_cast<long>(it - layout_.begin());
+    const long start = edit_->XYToPosition(0, line);
+    if (start < 0) return -1;
+    const long length = std::max<long>(edit_->GetLineLength(line), 0);
+    return start + std::clamp(static_cast<long>(pos.column - it->start), 0L, length);
+}
+
+size_t DiffFrame::SourceColumn(const SourcePos& pos, bool withMarkers) const {
+    return withMarkers && pos.column == 0 ? 0 : pos.column + Hidden(pos.line);
+}
+
+void DiffFrame::ShowDiffText() {
+    std::wstring text;
+    layout_.clear();
+    for (size_t i = 0; i < source_.size(); ++i) {
+        const std::wstring_view line =
+            std::wstring_view(source_[i]).substr(std::min(Hidden(i), source_[i].size()));
+        const std::vector<size_t> starts = WrapPoints(line, wrapWidth_);
+        for (size_t s = 0; s < starts.size(); ++s) {
+            const size_t end = s + 1 < starts.size() ? starts[s + 1] : line.size();
+            if (!layout_.empty()) text += L'\n';
+            text += line.substr(starts[s], end - starts[s]);
+            layout_.push_back({i, starts[s]});
+        }
+    }
+    text_ = NativeLineEnds(text);
     folded_.clear();
     SetReadOnlyText(edit_, text_);
 }
 
-void DiffDialog::ToggleMarkers() {
-    long       column  = 0;
-    long       line    = 0;
-    const bool located = CaretXY(column, line);
-    const long before  = located ? edit_->GetLineLength(line) : 0;
+void DiffFrame::Rerender(bool markers, size_t wrapWidth) {
+    SourcePos    pos;
+    const bool   located = CaretSource(pos);
+    const size_t full    = located ? SourceColumn(pos, false) : 0;
 
-    markers_ = !markers_;
-    ConfigSetBool(kDiffMarkersKey, markers_);
+    markers_   = markers;
+    wrapWidth_ = wrapWidth;
     ShowDiffText();
 
-    const long start = located ? edit_->XYToPosition(0, line) : -1;
-    if (start >= 0) {
-        const long length = edit_->GetLineLength(line);
-        const long delta  = before - length;
-        MoveCaret(edit_, start + std::clamp(column - delta, 0L, std::max(length, 0L)));
+    if (located) {
+        pos.column = full - std::min(full, Hidden(pos.line));
+        if (const long at = FromSource(pos); at >= 0) MoveCaret(edit_, at);
     }
+}
+
+void DiffFrame::ToggleMarkers() {
+    ConfigSetBool(kDiffMarkersKey, !markers_);
+    Rerender(!markers_, wrapWidth_);
     Announce(edit_, markers_ ? L"Diff markers shown" : L"Diff markers hidden");
 }
 
-void DiffDialog::GoHome() {
+void DiffFrame::GoHome() {
     long column = 0;
     long line   = 0;
     if (!CaretXY(column, line)) return;
@@ -302,13 +286,14 @@ void DiffDialog::GoHome() {
     MoveCaret(edit_, start + static_cast<long>(target));
 }
 
-void DiffDialog::CheckCaretLineAndPlay() {
+void DiffFrame::CheckCaretLineAndPlay() {
     const long line = CaretLine();
     if (line < 0 || line == lastLine_) return;
     lastLine_ = line;
 
-    if (static_cast<size_t>(line) >= lineMarkers_.size()) return;
-    const wchar_t marker = lineMarkers_[static_cast<size_t>(line)];
+    if (static_cast<size_t>(line) >= layout_.size()) return;
+    const std::wstring& source = source_[layout_[static_cast<size_t>(line)].source];
+    const wchar_t marker = source.empty() ? L' ' : source.front();
     if (marker == L'+') {
         PlaySoundEffect(Sound::LineInserted);
     } else if (marker == L'-') {
@@ -316,12 +301,12 @@ void DiffDialog::CheckCaretLineAndPlay() {
     }
 }
 
-const std::wstring& DiffDialog::FoldedText() {
+const std::wstring& DiffFrame::FoldedText() {
     if (folded_.size() != text_.size()) folded_ = ToLower(text_);
     return folded_;
 }
 
-bool DiffDialog::FindInDiff(bool forward) {
+bool DiffFrame::FindInDiff(bool forward) {
     if (find_.what.empty()) return false;
 
     const bool          matchCase = find_.matchCase;
@@ -331,9 +316,7 @@ bool DiffDialog::FindInDiff(bool forward) {
 
     size_t pos = std::wstring::npos;
     if (needle.size() <= hay.size()) {
-        long selStart = 0;
-        long selEnd   = 0;
-        edit_->GetSelection(&selStart, &selEnd);
+        const auto [selStart, selEnd] = TextSelection(edit_);
         if (forward) {
             pos = hay.find(needle, static_cast<size_t>(selEnd));
             if (pos == std::wstring::npos && wrap) pos = hay.find(needle);
@@ -354,95 +337,93 @@ bool DiffDialog::FindInDiff(bool forward) {
     return true;
 }
 
-void DiffDialog::OpenFindDialog() {
+void DiffFrame::FindAgain(bool forward) {
+    if (find_.what.empty()) OpenFindDialog();
+    else                    FindInDiff(forward);
+}
+
+void DiffFrame::OpenFindDialog() {
     if (ShowFindDialog(this, find_)) FindInDiff(true);
 }
 
-void DiffDialog::OpenEditorAtCaret() {
-    const DiffLocation loc    = LocateInDiff(params_.diffText, CaretLine());
-    const std::wstring editor = FindEditor();
-    const std::wstring full   =
-        loc.path.empty() ? std::wstring() : RepoFilePath(params_.workTree, loc.path);
+bool DiffFrame::EditableFileAtCaret(DiffLocation& loc, std::wstring& path) const {
+    SourcePos pos;
+    if (FindEditor().empty() || !CaretSource(pos)) return false;
+    loc  = LocateInDiff(diff_, files_, pos.line);
+    path = loc.path.empty() ? std::wstring() : RepoFilePath(workTree_, loc.path);
+    return PathExists(path);
+}
 
-    if (editor.empty() || !PathExists(full)) {
+void DiffFrame::OpenEditor(bool atLine) {
+    DiffLocation loc;
+    std::wstring full;
+    if (!EditableFileAtCaret(loc, full)) {
         wxBell();
         return;
     }
 
-    int line = loc.line;
-    if (!loc.content.empty()) {
-        const std::wstring body = Utf8ToWide(ReadFileBytes(full));
-        line = body.empty()
-                   ? 0
-                   : MatchLineInFile(SplitLines(body), loc.content, loc.line);
-    }
-
-    if (!OpenWithEditor(editor, full, line)) {
-        ShowCouldNotOpen(this, L"Edit file", full);
-    }
+    EditFile(this, full, atLine ? LineInFile(loc, full) : 0);
 }
 
-void DiffDialog::OnKeyDown(wxKeyEvent& event) {
-    const int key = event.GetKeyCode();
+void DiffFrame::CopyText(bool withMarkers) {
+    const auto [from, to] = TextSelection(edit_);
+    if (from == to) {
+        if (withMarkers) SetClipboardText(NativeLineEnds(diff_));
+        return;
+    }
 
-    if (key == WXK_TAB) return;
-    if (IsKey(event, 'A', wxMOD_CONTROL)) {
-        edit_->SelectAll();
-        return;
+    SourcePos first;
+    SourcePos last;
+    if (!ToSource(from, first) || !ToSource(to, last)) return;
+
+    std::wstring out;
+    for (size_t line = first.line; line <= last.line && line < source_.size(); ++line) {
+        const std::wstring& text  = source_[line];
+        size_t              begin = line == first.line ? SourceColumn(first, withMarkers)
+                                    : withMarkers      ? 0
+                                                       : Hidden(line);
+        size_t end = line == last.line ? SourceColumn(last, withMarkers) : text.size();
+        begin = std::min(begin, text.size());
+        end   = std::clamp(end, begin, text.size());
+        if (line != first.line) out += L'\n';
+        out.append(text, begin, end - begin);
     }
-    if (IsKey(event, 'E', wxMOD_CONTROL | wxMOD_SHIFT)) {
-        OpenEditorAtCaret();
-        return;
+    SetClipboardText(NativeLineEnds(out));
+}
+
+void DiffFrame::ShowContextMenu(wxPoint at) {
+    if (at == wxDefaultPosition) {
+        at = edit_->PositionToCoords(edit_->GetInsertionPoint());
+        at = at == wxDefaultPosition ? wxPoint(0, 0)
+                                     : wxPoint(at.x, at.y + edit_->GetCharHeight());
+    } else {
+        at = edit_->ScreenToClient(at);
     }
+
+    ShowPopupMenu(edit_, at, AppendGroup(CopyEntries(), EditorEntries()));
+}
+
+void DiffFrame::OnKeyDown(wxKeyEvent& event) {
+    const int key = event.GetKeyCode();
+    if (key == WXK_TAB || HandleShortcut(event)) return;
     if (IsKey(event, WXK_HOME)) {
         GoHome();
         return;
     }
-    if (IsKey(event, 'I', wxMOD_CONTROL)) {
-        ToggleMarkers();
-        return;
-    }
-    if (IsKey(event, 'F', wxMOD_CONTROL)) {
-        OpenFindDialog();
-        return;
-    }
-    if (const bool back = IsKey(event, WXK_F3, wxMOD_SHIFT);
-        back || IsKey(event, WXK_F3)) {
-        if (find_.what.empty()) OpenFindDialog();
-        else                    FindInDiff(!back);
-        return;
-    }
-
     event.Skip();
     if (IsCaretMoveKey(key)) CallAfter([this] { CheckCaretLineAndPlay(); });
 }
 
 }
 
-std::wstring SeparateFileDiffs(std::wstring_view text) {
-    std::wstring out;
-    out.reserve(text.size() + 64);
-    size_t pos = 0;
-    while (pos < text.size()) {
-        const size_t eol  = text.find(L'\n', pos);
-        const size_t next = (eol == text.npos) ? text.size() : eol + 1;
-        if (!out.empty() && text.substr(pos).starts_with(L"diff --git ")) {
-            if (out.back() != L'\n') out += L'\n';
-            out += L"\n\n";
-        }
-        out += text.substr(pos, next - pos);
-        pos = next;
-    }
-    return out;
-}
-
 void ShowDiffWindow(wxWindow* owner, const DiffWindowParams& params) {
-    {
-        DiffDialog dialog(owner, params);
-        if (!owner) dialog.CallAfter([&dialog] { ForceForeground(&dialog); });
-        dialog.ShowModal();
+    auto* frame = new DiffFrame(owner, params);
+    if (!owner) {
+        ShowOnActiveDisplay(frame);
+        return;
     }
-    CloseAudio();
+    frame->CentreOnParent();
+    frame->RunModal();
 }
 
 }

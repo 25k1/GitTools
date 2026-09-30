@@ -6,6 +6,9 @@
 
 namespace git_tools {
 
+inline constexpr wchar_t kNoExecutablePath[] =
+    L"Failed to resolve the gittools executable path.";
+
 std::wstring ExecutablePath();
 
 std::wstring CurrentDirectory();

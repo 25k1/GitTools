@@ -8,9 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <cstdlib>
-#include <iterator>
 #include <string_view>
 #include <vector>
 
@@ -77,11 +75,6 @@ std::wstring BaseName(const std::wstring& path) {
     return slash == std::wstring::npos ? path : path.substr(slash + 1);
 }
 
-template <size_t N>
-bool OneOf(const std::wstring& name, const std::wstring_view (&names)[N]) {
-    return std::ranges::find(names, name) != std::end(names);
-}
-
 bool AppendLineArgs(std::vector<std::wstring>& args, const std::wstring& editor,
                     const std::wstring& path, int line) {
     constexpr std::wstring_view kGoto[]     = {L"code", L"codium", L"code-oss",
@@ -95,15 +88,15 @@ bool AppendLineArgs(std::vector<std::wstring>& args, const std::wstring& editor,
 
     const std::wstring name = BaseName(editor);
     const std::wstring num  = std::to_wstring(line);
-    if (OneOf(name, kGoto)) {
+    if (IsOneOf(name, kGoto)) {
         args.push_back(L"--goto");
         args.push_back(path + L":" + num);
-    } else if (OneOf(name, kSuffix)) {
+    } else if (IsOneOf(name, kSuffix)) {
         args.push_back(path + L":" + num);
-    } else if (OneOf(name, kPlus)) {
+    } else if (IsOneOf(name, kPlus)) {
         args.push_back(L"+" + num);
         args.push_back(path);
-    } else if (OneOf(name, kLineFlag)) {
+    } else if (IsOneOf(name, kLineFlag)) {
         args.push_back(L"--line");
         args.push_back(num);
         args.push_back(path);
@@ -168,11 +161,10 @@ bool RevealInExplorer(const std::wstring& path) {
            SpawnDetachedProcess(L"", opener, {folder});
 }
 
-bool OpenWithEditor(const std::wstring& editor, const std::wstring& path,
-                    int line) {
+bool OpenWithEditor(const std::wstring& path, int line) {
+    const std::wstring editor = FindEditor();
     if (editor.empty()) return false;
 
-    FindEditor();
     std::vector<std::wstring> args;
     bool lineUsed = false;
     bool pathUsed = false;

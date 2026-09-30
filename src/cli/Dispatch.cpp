@@ -33,15 +33,11 @@ int RunTestGit() {
             text += L"\nstderr:\n" + Utf8ToWide(r.stderrText);
         }
     }
-    RunGui([&] {
-        ShowInfo(nullptr, L"gittools test-git", text);
-        return 0;
-    });
+    RunGuiInfo(L"gittools test-git", text);
     return r.ok() ? 0 : 1;
 }
 
 int RunVersion() {
-    UseUtf8Console();
     WriteOut(std::wstring(L"gittools ") + kVersion);
     return 0;
 }
@@ -60,10 +56,7 @@ int RunUsage() {
         L"  gittools install-diff          open `git diff` in gittools (pager.diff)\n"
         L"  gittools uninstall-diff        restore the normal `git diff` pager\n"
         L"  gittools --version, -v         print the version\n";
-    return RunGui([usage] {
-        ShowInfo(nullptr, L"gittools", usage);
-        return 0;
-    });
+    return RunGuiInfo(L"gittools", usage);
 }
 
 template <int (*Run)()>
@@ -112,6 +105,7 @@ int Dispatch(int argc, wchar_t** argv) {
         (console == Console::KeepUntilDetached &&
          !IsDetachedInvocation(argc, argv));
     if (!keepConsole) ReleaseConsole();
+    if (console == Console::Keep) UseUtf8Console();
 
     return found ? command->run(argc, argv) : RunUsage();
 }

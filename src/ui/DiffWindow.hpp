@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 
 class wxWindow;
 
@@ -12,8 +11,6 @@ struct DiffWindowParams {
     std::wstring diffText;
     std::wstring workTree;
 };
-
-std::wstring SeparateFileDiffs(std::wstring_view text);
 
 void ShowDiffWindow(wxWindow* owner, const DiffWindowParams& params);
 

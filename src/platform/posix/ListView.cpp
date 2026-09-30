@@ -99,10 +99,6 @@ void VirtualList::ApplyColumnLayout() {
     }
 }
 
-size_t VirtualList::RowCount() const {
-    return model_->GetCount();
-}
-
 void VirtualList::SetRowCount(size_t count) {
     size_t current = model_->GetCount();
     if (count < current) {

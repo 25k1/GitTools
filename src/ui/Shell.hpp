@@ -17,7 +17,6 @@ void ResetEditorCache();
 
 bool RevealInExplorer(const std::wstring& path);
 
-bool OpenWithEditor(const std::wstring& editor, const std::wstring& path,
-                    int line = 0);
+bool OpenWithEditor(const std::wstring& path, int line = 0);
 
 }

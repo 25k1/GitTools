@@ -10,12 +10,17 @@ namespace git_tools {
 
 namespace {
 
+void CloseOwned(HANDLE& h) {
+    if (h) CloseHandle(h);
+    h = nullptr;
+}
+
 struct PipePair {
     HANDLE readEnd  = nullptr;
     HANDLE writeEnd = nullptr;
     ~PipePair() {
-        if (readEnd)  CloseHandle(readEnd);
-        if (writeEnd) CloseHandle(writeEnd);
+        CloseOwned(readEnd);
+        CloseOwned(writeEnd);
     }
 };
 
@@ -57,13 +62,6 @@ struct InheritList {
                    handles, count * sizeof(HANDLE), nullptr, nullptr) != 0;
     }
 };
-
-void DrainPipe(HANDLE h, std::string& out, const OutputSink& sink = {}) {
-    ReadAll(h, [&](std::string_view bytes) {
-        if (sink) sink(bytes);
-        else      out.append(bytes);
-    });
-}
 
 }
 
@@ -113,10 +111,7 @@ ProcessResult RunProcess(const std::wstring& executable,
     PROCESS_INFORMATION pi{};
 
     std::wstring cmdLine = BuildCommandLine(executable, args);
-    std::vector<wchar_t> cmdBuf(cmdLine.begin(), cmdLine.end());
-    cmdBuf.push_back(L'\0');
-
-    LPCWSTR cwdPtr = cwd.empty() ? nullptr : cwd.c_str();
+    LPCWSTR      cwdPtr  = cwd.empty() ? nullptr : cwd.c_str();
 
     DWORD flags = CREATE_UNICODE_ENVIRONMENT;
     InheritList inherit;
@@ -130,7 +125,7 @@ ProcessResult RunProcess(const std::wstring& executable,
     }
 
     BOOL ok = CreateProcessW(
-        nullptr, cmdBuf.data(),
+        nullptr, cmdLine.data(),
         nullptr, nullptr,
         TRUE,
         flags,
@@ -150,25 +145,23 @@ ProcessResult RunProcess(const std::wstring& executable,
     }
 
     if (stdio == StdioMode::Capture) {
-        CloseHandle(stdoutPipe.writeEnd); stdoutPipe.writeEnd = nullptr;
-        CloseHandle(stderrPipe.writeEnd); stderrPipe.writeEnd = nullptr;
-        if (stdinPipe.readEnd) {
-            CloseHandle(stdinPipe.readEnd);
-            stdinPipe.readEnd = nullptr;
-        }
+        CloseOwned(stdoutPipe.writeEnd);
+        CloseOwned(stderrPipe.writeEnd);
+        CloseOwned(stdinPipe.readEnd);
 
         std::thread tIn;
         if (input) {
             tIn = std::thread([&] {
                 WriteAll(stdinPipe.writeEnd, *input);
-                CloseHandle(stdinPipe.writeEnd);
-                stdinPipe.writeEnd = nullptr;
+                CloseOwned(stdinPipe.writeEnd);
             });
         }
         std::thread tOut([&] {
-            DrainPipe(stdoutPipe.readEnd, result.stdoutText, onStdout);
+            ReadAll(stdoutPipe.readEnd, CollectOutput(result.stdoutText, onStdout));
         });
-        std::thread tErr([&] { DrainPipe(stderrPipe.readEnd, result.stderrText); });
+        std::thread tErr([&] {
+            ReadAll(stderrPipe.readEnd, CollectOutput(result.stderrText));
+        });
 
         WaitForSingleObject(pi.hProcess, INFINITE);
         if (tIn.joinable()) tIn.join();

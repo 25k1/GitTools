@@ -5,8 +5,8 @@
 #include "util/System.hpp"
 
 #include <algorithm>
-#include <iterator>
 #include <unordered_map>
+#include <utility>
 
 namespace git_tools {
 
@@ -82,36 +82,6 @@ constexpr std::wstring_view kDisplayFlags[]  = {
 };
 constexpr std::wstring_view kDisplayPrefix[] = {L"--date=", L"--encoding="};
 
-template <size_t N>
-bool IsOneOf(std::wstring_view arg, const std::wstring_view (&flags)[N]) {
-    return std::ranges::find(flags, arg) != std::end(flags);
-}
-
-template <size_t N>
-bool HasPrefix(std::wstring_view arg, const std::wstring_view (&prefixes)[N]) {
-    return std::ranges::any_of(prefixes, [arg](std::wstring_view p) {
-        return arg.starts_with(p);
-    });
-}
-
-std::vector<std::wstring> Concat(std::vector<std::wstring> head,
-                                 const std::vector<std::wstring>& tail) {
-    head.insert(head.end(), tail.begin(), tail.end());
-    return head;
-}
-
-FileChangeKind KindFromChar(wchar_t c) {
-    switch (c) {
-        case L'A': return FileChangeKind::Added;
-        case L'D': return FileChangeKind::Deleted;
-        case L'M': return FileChangeKind::Modified;
-        case L'R': return FileChangeKind::Renamed;
-        case L'C': return FileChangeKind::Copied;
-        case L'T': return FileChangeKind::TypeChanged;
-        default:   return FileChangeKind::Other;
-    }
-}
-
 std::wstring NormalizeNumstatPath(std::wstring_view p) {
     const size_t arrow = p.find(L" => ");
     if (arrow == p.npos) return std::wstring(p);
@@ -133,14 +103,9 @@ struct NumStat {
 
 int ParseCount(std::wstring_view field) {
     if (field == L"-") return -2;
-    if (field.empty()) return -1;
     long long value = 0;
-    for (wchar_t c : field) {
-        if (c < L'0' || c > L'9') return -1;
-        value = value * 10 + (c - L'0');
-        if (value > 1000000000) return 1000000000;
-    }
-    return static_cast<int>(value);
+    return ParseDigits(field, value) ? static_cast<int>(std::min(value, 1000000000LL))
+                                     : -1;
 }
 
 std::unordered_map<std::wstring, NumStat> ParseNumstat(std::wstring_view diff) {
@@ -174,6 +139,14 @@ std::vector<FileChange> ParseRawStatus(std::wstring_view diff) {
     return result;
 }
 
+std::wstring CurrentBranchLabel(const std::wstring& cwd) {
+    std::wstring branch = GitOutput({L"symbolic-ref", L"--short", L"-q", L"HEAD"}, cwd);
+    if (!branch.empty()) return branch;
+
+    std::wstring sha = GitOutput({L"rev-parse", L"--short", L"HEAD"}, cwd);
+    return sha.empty() ? std::wstring() : L"detached at " + sha;
+}
+
 bool IsRefName(const std::wstring& name, const std::wstring& cwd) {
     ProcessResult r = RunGit(
         {L"rev-parse", L"--symbolic-full-name", L"--verify", L"-q", name}, cwd);
@@ -185,7 +158,7 @@ std::vector<std::wstring> StripFormatArgs(const std::vector<std::wstring>& args)
     bool pathspecs = false;
     for (const std::wstring& a : args) {
         pathspecs = pathspecs || a == L"--";
-        if (pathspecs || !(IsOneOf(a, kFormatFlags) || HasPrefix(a, kFormatPrefix))) {
+        if (pathspecs || !(IsOneOf(a, kFormatFlags) || StartsWithAny(a, kFormatPrefix))) {
             out.push_back(a);
         }
     }
@@ -199,7 +172,7 @@ std::vector<std::wstring> DisplayArgs(const std::vector<std::wstring>& args) {
             out.push_back(args[i]);
             out.push_back(args[++i]);
         } else if (IsOneOf(args[i], kDisplayFlags) ||
-                   HasPrefix(args[i], kDisplayPrefix)) {
+                   StartsWithAny(args[i], kDisplayPrefix)) {
             out.push_back(args[i]);
         }
     }
@@ -273,10 +246,6 @@ Commit CommitLoader::At(size_t i) {
 
 std::wstring CommitLoader::Sha(size_t i) {
     return Locked([&] { return store_.Sha(i); });
-}
-
-bool CommitLoader::Subject(size_t i, std::wstring& out) {
-    return Locked([&] { return store_.Subject(i, out); });
 }
 
 size_t CommitLoader::IndexOf(std::wstring_view sha) {
@@ -360,16 +329,6 @@ CommitListResult StartCommitLog(const std::vector<std::wstring>& logArgs,
     return result;
 }
 
-std::wstring CurrentBranchLabel(const std::wstring& cwd) {
-    std::wstring branch =
-        TrimmedOutput(RunGit({L"symbolic-ref", L"--short", L"-q", L"HEAD"}, cwd));
-    if (!branch.empty()) return branch;
-
-    std::wstring sha =
-        TrimmedOutput(RunGit({L"rev-parse", L"--short", L"HEAD"}, cwd));
-    return sha.empty() ? std::wstring() : L"detached at " + sha;
-}
-
 std::wstring QueryBranchLabel(const std::vector<std::wstring>& logArgs,
                               const std::wstring& cwd) {
     std::vector<std::wstring> refs;
@@ -378,6 +337,15 @@ std::wstring QueryBranchLabel(const std::vector<std::wstring>& logArgs,
         if (!a.empty() && a[0] != L'-' && IsRefName(a, cwd)) refs.push_back(a);
     }
     return refs.size() == 1 ? refs.front() : CurrentBranchLabel(cwd);
+}
+
+std::vector<std::wstring> WithDateRange(std::vector<std::wstring> logArgs,
+                                        const DateRange& range) {
+    std::vector<std::wstring> dates;
+    if (!range.since.empty()) dates.push_back(L"--since=" + range.since + L" 00:00:00");
+    if (!range.until.empty()) dates.push_back(L"--until=" + range.until + L" 23:59:59");
+    logArgs.insert(std::ranges::find(logArgs, L"--"), dates.begin(), dates.end());
+    return logArgs;
 }
 
 std::wstring LoadFilesDiff(const std::wstring& sha,
@@ -396,7 +364,7 @@ BranchListResult LoadBranchList(const std::wstring& cwd) {
     ProcessResult r = RunGit({
         L"for-each-ref",
         L"--format=%(HEAD)\x1f%(refname)\x1f%(refname:short)\x1f"
-        L"%(upstream:short)\x1f%(objectname:short)\x1f%(subject)",
+        L"%(upstream:short)\x1f%(subject)",
         L"refs/heads",
         L"refs/remotes",
     }, cwd);
@@ -404,14 +372,13 @@ BranchListResult LoadBranchList(const std::wstring& cwd) {
     if (!result.errorMessage.empty()) return result;
     ForEachLine(Utf8ToWide(r.stdoutText), [&](std::wstring_view line) {
         std::vector<std::wstring> fields = Split(line, L'\x1f');
-        if (fields.size() != 6) return;
+        if (fields.size() != 5) return;
         Branch b;
         b.isCurrent = fields[0].starts_with(L'*');
         b.isRemote  = fields[1].starts_with(L"refs/remotes/");
         b.name      = std::move(fields[2]);
         b.upstream  = std::move(fields[3]);
-        b.shortSha  = std::move(fields[4]);
-        b.subject   = std::move(fields[5]);
+        b.subject   = std::move(fields[4]);
         if (b.name != L"HEAD" && !b.name.ends_with(L"/HEAD")) {
             result.branches.push_back(std::move(b));
         }
@@ -453,9 +420,63 @@ CommitDetails LoadCommitDetails(const std::wstring& sha,
     return details;
 }
 
+CommitDetailsLoader::CommitDetailsLoader(std::wstring cwd, Done done)
+    : cwd_(std::move(cwd)), done_(std::move(done)) {
+    worker_ = std::thread(&CommitDetailsLoader::Run, this);
+}
+
+CommitDetailsLoader::~CommitDetailsLoader() {
+    Stop();
+}
+
+void CommitDetailsLoader::Invalidate() {
+    ++token_;
+    canceller_.Cancel();
+}
+
+void CommitDetailsLoader::Load(const std::wstring& sha) {
+    {
+        std::lock_guard lock(mu_);
+        pendingTok_ = token_.load();
+        pendingSha_ = sha;
+    }
+    cv_.notify_one();
+}
+
+void CommitDetailsLoader::Stop() {
+    {
+        std::lock_guard lock(mu_);
+        stop_ = true;
+    }
+    canceller_.Cancel();
+    cv_.notify_all();
+    if (worker_.joinable()) worker_.join();
+}
+
+void CommitDetailsLoader::Run() {
+    for (;;) {
+        int          token;
+        std::wstring sha;
+        {
+            std::unique_lock lock(mu_);
+            cv_.wait(lock, [this] { return stop_ || pendingTok_ >= 0; });
+            if (stop_) return;
+            token = std::exchange(pendingTok_, -1);
+            sha   = pendingSha_;
+        }
+
+        canceller_.Reset();
+        auto details = std::make_shared<CommitDetails>(
+            LoadCommitDetails(sha, cwd_, &canceller_));
+        std::lock_guard lock(mu_);
+        if (stop_) return;
+        done_(token, std::move(details));
+    }
+}
+
 std::wstring LoadCommitMessage(const std::wstring& sha,
                                const std::wstring& cwd) {
-    return TrimmedOutput(RunGit({L"show", L"-s", L"--format=%B", sha}, cwd));
+    return GitOutput({L"show", L"-s", L"--format=%B", sha}, cwd);
 }
 
 }

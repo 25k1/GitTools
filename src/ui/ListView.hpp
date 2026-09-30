@@ -33,10 +33,9 @@ public:
 
     void ApplyColumnLayout();
 
-    size_t RowCount() const;
-    void   SetRowCount(size_t count);
-    void   ResetRows(size_t count);
-    void   RefreshRow(long row);
+    void SetRowCount(size_t count);
+    void ResetRows(size_t count);
+    void RefreshRow(long row);
 
     long              SelectedRow() const;
     std::vector<long> SelectedRows() const;
@@ -92,6 +91,11 @@ public:
 
 inline long RowWithin(long row, size_t count) {
     return row >= 0 && static_cast<size_t>(row) < count ? row : -1;
+}
+
+template <typename T>
+const T* RowAt(const std::vector<T>& rows, long row) {
+    return RowWithin(row, rows.size()) >= 0 ? &rows[static_cast<size_t>(row)] : nullptr;
 }
 
 inline bool HasFocusWithin(const wxWindow* window) {

@@ -6,6 +6,7 @@
 #include "util/Encoding.hpp"
 #include "util/Text.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -26,6 +27,11 @@ ProcessResult RunGit(const std::vector<std::wstring>& args,
 
 inline std::wstring TrimmedOutput(const ProcessResult& r) {
     return r.ok() ? Utf8ToWide(TrimRight(r.stdoutText)) : std::wstring();
+}
+
+inline std::wstring GitOutput(const std::vector<std::wstring>& args,
+                              const std::wstring& cwd = L"") {
+    return TrimmedOutput(RunGit(args, cwd));
 }
 
 std::wstring GitFailure(const std::wstring& what, const ProcessResult& r);
@@ -60,7 +66,6 @@ public:
 
     Commit       At(size_t i);
     std::wstring Sha(size_t i);
-    bool         Subject(size_t i, std::wstring& out);
     size_t       IndexOf(std::wstring_view sha);
 
     void SetUnloadFar(bool on);
@@ -105,10 +110,19 @@ CommitListResult StartCommitLog(const std::vector<std::wstring>& logArgs,
                                 const std::wstring& cwd,
                                 size_t first = kCommitPage);
 
-std::wstring CurrentBranchLabel(const std::wstring& cwd);
-
 std::wstring QueryBranchLabel(const std::vector<std::wstring>& logArgs,
                               const std::wstring& cwd);
+
+struct DateRange {
+    std::wstring since;
+    std::wstring until;
+
+    bool empty() const { return since.empty() && until.empty(); }
+    bool operator==(const DateRange&) const = default;
+};
+
+std::vector<std::wstring> WithDateRange(std::vector<std::wstring> logArgs,
+                                        const DateRange& range);
 
 inline std::vector<std::wstring> RangeLogArgs(const std::wstring& oldSha,
                                               const std::wstring& newSha) {
@@ -118,6 +132,36 @@ inline std::vector<std::wstring> RangeLogArgs(const std::wstring& oldSha,
 CommitDetails LoadCommitDetails(const std::wstring& sha,
                                 const std::wstring& cwd,
                                 ProcessCanceller* cancel = nullptr);
+
+class CommitDetailsLoader {
+public:
+    using Done = std::function<void(int token, std::shared_ptr<CommitDetails>)>;
+
+    CommitDetailsLoader(std::wstring cwd, Done done);
+    ~CommitDetailsLoader();
+
+    CommitDetailsLoader(const CommitDetailsLoader&)            = delete;
+    CommitDetailsLoader& operator=(const CommitDetailsLoader&) = delete;
+
+    void Invalidate();
+    void Load(const std::wstring& sha);
+    bool IsCurrent(int token) const { return token == token_.load(); }
+    void Stop();
+
+private:
+    void Run();
+
+    std::wstring            cwd_;
+    Done                    done_;
+    ProcessCanceller        canceller_;
+    std::mutex              mu_;
+    std::condition_variable cv_;
+    bool                    stop_       = false;
+    int                     pendingTok_ = -1;
+    std::wstring            pendingSha_;
+    std::atomic<int>        token_{0};
+    std::thread             worker_;
+};
 
 std::wstring LoadCommitMessage(const std::wstring& sha,
                                const std::wstring& cwd);

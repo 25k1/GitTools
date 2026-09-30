@@ -1,5 +1,7 @@
 #include "ui/App.hpp"
 
+#include "ui/Shell.hpp"
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -24,6 +26,16 @@ std::function<int()>& StartFunction() {
     return start;
 }
 
+void ShowCouldNotOpen(wxWindow* parent, const std::wstring& title,
+                      const std::wstring& path) {
+    ShowError(parent, title, L"Could not open:\n\n" + path);
+}
+
+int RunGuiMessage(const std::wstring& title, const std::wstring& text, bool error) {
+    return RunGui([&] {
+        wxMessageBox(text, title, wxOK | (error ? wxICON_ERROR : wxICON_INFORMATION));
+        return error ? 1 : 0;
+    });
 }
 
 #ifdef _WIN32
@@ -58,6 +70,8 @@ void ForceForeground(wxTopLevelWindow* window) {
 }
 
 #endif
+
+}
 
 class GitToolsApp : public wxApp {
 public:
@@ -99,9 +113,24 @@ void ShowError(wxWindow* parent, const std::wstring& title,
     wxMessageBox(text, title, wxOK | wxICON_ERROR, parent);
 }
 
-void ShowInfo(wxWindow* parent, const std::wstring& title,
-              const std::wstring& text) {
-    wxMessageBox(text, title, wxOK | wxICON_INFORMATION, parent);
+int RunGuiInfo(const std::wstring& title, const std::wstring& text) {
+    return RunGuiMessage(title, text, false);
+}
+
+int RunGuiError(const std::wstring& title, const std::wstring& text) {
+    return RunGuiMessage(title, text, true);
+}
+
+void RevealFile(wxWindow* parent, const std::wstring& path) {
+    if (!RevealInExplorer(path)) ShowCouldNotOpen(parent, L"Open file location", path);
+}
+
+void EditFile(wxWindow* parent, const std::wstring& path, int line) {
+    if (!PathExists(path)) {
+        wxBell();
+    } else if (!OpenWithEditor(path, line)) {
+        ShowCouldNotOpen(parent, L"Edit file", path);
+    }
 }
 
 bool SetClipboardText(const std::wstring& text) {

@@ -21,7 +21,6 @@ public:
 
     Commit       At(size_t i) const;
     std::wstring Sha(size_t i) const;
-    bool         Subject(size_t i, std::wstring& out) const;
     size_t       IndexOf(std::wstring_view sha) const;
 
     void        SetResidentLimit(size_t pages);

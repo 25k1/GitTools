@@ -36,12 +36,7 @@ int RunLog(int argc, wchar_t** argv) {
 
 int RunLogRange(int argc, wchar_t** argv) {
     constexpr wchar_t kTitle[] = L"gittools log-range";
-    if (argc < 4) {
-        return RunGui([&] {
-            ShowError(nullptr, kTitle, L"usage: gittools log-range OLD NEW");
-            return 1;
-        });
-    }
+    if (argc < 4) return RunGuiError(kTitle, L"usage: gittools log-range OLD NEW");
     return OpenLogWindow(kTitle, std::wstring(argv[2]) + L".." + argv[3],
                          RangeLogArgs(argv[2], argv[3]), LogErrors::Report);
 }

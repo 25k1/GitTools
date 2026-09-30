@@ -3,10 +3,8 @@
 
 #include "ui/ToolFrame.hpp"
 
-#include "ui/OptionsDialog.hpp"
 #include "ui/Widgets.hpp"
 
-#include <wx/menu.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
@@ -14,9 +12,6 @@
 namespace git_tools {
 
 namespace {
-
-constexpr int kIdDebugOutput = wxID_HIGHEST + 1;
-constexpr int kIdOptions     = wxID_HIGHEST + 2;
 
 bool& DebugOutputFlag() {
     static bool on = ConfigGetBool(kDebugOutputKey, false);
@@ -26,29 +21,10 @@ bool& DebugOutputFlag() {
 }
 
 ToolFrame::ToolFrame(const std::wstring& title, const wxSize& size)
-    : wxFrame(nullptr, wxID_ANY, title) {
-    SetSize(FromDIP(size));
+    : MenuFrame(nullptr, title, size) {
     panel_ = new wxPanel(this);
     sizer_ = new wxBoxSizer(wxVERTICAL);
-
-    auto* file = new wxMenu;
-    file->AppendCheckItem(kIdDebugOutput, L"&Debug output");
-    file->Check(kIdDebugOutput, DebugOutputFlag());
-    file->Append(kIdOptions, L"&Options...");
-    file->AppendSeparator();
-    file->Append(wxID_EXIT, L"E&xit");
-    auto* bar = new wxMenuBar;
-    bar->Append(file, L"&File");
-    SetMenuBar(bar);
     CreateStatusBar();
-
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) { ToggleDebugOutput(); },
-         kIdDebugOutput);
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
-        if (ShowOptionsDialog(this)) OnOptionsChanged();
-    }, kIdOptions);
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) { Close(); }, wxID_EXIT);
-    CloseOnEscape(this, [this] { Close(); });
 
     SetTranscriptListener([this] { CallAfter([this] { RefreshTranscript(); }); });
 }
@@ -57,9 +33,10 @@ ToolFrame::~ToolFrame() {
     SetTranscriptListener(nullptr);
 }
 
-void ToolFrame::AddLabel(const wchar_t* text) {
-    sizer_->Add(new wxStaticText(panel_, wxID_ANY, text), 0,
-                wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+wxStaticText* ToolFrame::AddLabel(const wchar_t* text) {
+    auto* label = new wxStaticText(panel_, wxID_ANY, text);
+    sizer_->Add(label, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+    return label;
 }
 
 void ToolFrame::AddPane(wxWindow* pane, int proportion) {
@@ -67,18 +44,27 @@ void ToolFrame::AddPane(wxWindow* pane, int proportion) {
 }
 
 void ToolFrame::FinishLayout(wxWindow* absorber, int outputShare) {
-    outputLabel_ = new wxStaticText(panel_, wxID_ANY, L"&Output");
-    sizer_->Add(outputLabel_, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
-    output_ = CreateReadOnlyText(panel_, wxTE_DONTWRAP | wxHSCROLL);
+    outputLabel_ = AddLabel(L"&Output");
+    output_      = CreateReadOnlyText(panel_, wxTE_DONTWRAP | wxHSCROLL);
     AddPane(output_, outputShare);
     sizer_->AddSpacer(FromDIP(4));
     panel_->SetSizer(sizer_);
 
+    BuildMenus();
     absorber_     = absorber;
     absorberBase_ = sizer_->GetItem(absorber)->GetProportion();
     outputShare_  = outputShare;
     ApplyOutputVisibility();
     RefreshTranscript();
+}
+
+std::vector<MenuSection> ToolFrame::Menus() {
+    return {{L"&File", {
+        {L"&Debug output", [this] { ToggleDebugOutput(); }, true, true, DebugOutputFlag()},
+        OptionsEntry(),
+        kMenuSeparator,
+        CloseEntry(L"E&xit"),
+    }}};
 }
 
 std::wstring ToolFrame::StatusText() const {
@@ -106,7 +92,6 @@ void ToolFrame::ToggleDebugOutput() {
     const bool on = !DebugOutputFlag();
     DebugOutputFlag() = on;
     ConfigSetBool(kDebugOutputKey, on);
-    GetMenuBar()->Check(kIdDebugOutput, on);
     ApplyOutputVisibility();
     RefreshTranscript();
 }

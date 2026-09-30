@@ -44,22 +44,19 @@ std::wstring ConfigGet(const std::wstring& key, const std::wstring& fallback) {
 }
 
 bool ConfigGetBool(const std::wstring& key, bool fallback) {
+    constexpr std::wstring_view kTrue[]  = {L"true", L"yes", L"on", L"1"};
+    constexpr std::wstring_view kFalse[] = {L"false", L"no", L"off", L"0"};
     const std::wstring v = ToLower(ConfigGet(key));
-    if (v == L"true" || v == L"yes" || v == L"on" || v == L"1") return true;
-    if (v == L"false" || v == L"no" || v == L"off" || v == L"0") return false;
+    if (IsOneOf(v, kTrue)) return true;
+    if (IsOneOf(v, kFalse)) return false;
     return fallback;
 }
 
 int ConfigGetInt(const std::wstring& key, int fallback) {
-    const std::wstring v = ConfigGet(key);
-    if (v.empty()) return fallback;
-    int value = 0;
-    for (wchar_t c : v) {
-        if (c < L'0' || c > L'9') return fallback;
-        value = value * 10 + (c - L'0');
-        if (value > 1000000) return fallback;
-    }
-    return value;
+    long long value = 0;
+    return ParseDigits(ConfigGet(key), value) && value <= 1000000
+               ? static_cast<int>(value)
+               : fallback;
 }
 
 void ConfigSet(const std::wstring& key, const std::wstring& value) {
@@ -71,8 +68,12 @@ void ConfigSetBool(const std::wstring& key, bool value) {
     ConfigSet(key, value ? L"true" : L"false");
 }
 
+void ConfigSetInt(const std::wstring& key, int value) {
+    ConfigSet(key, std::to_wstring(value));
+}
+
 std::wstring GlobalConfigGet(const std::wstring& key) {
-    return TrimmedOutput(RunGit({L"config", L"--global", L"--get", key}));
+    return GitOutput({L"config", L"--global", L"--get", key});
 }
 
 ProcessResult GlobalConfigSet(const std::wstring& key, const std::wstring& value) {

@@ -23,6 +23,19 @@ namespace {
 
 enum class Shift { Up, Down, Top, Bottom };
 
+struct MoveCommand {
+    Shift          shift;
+    const wchar_t* label;
+    int            key;
+};
+
+constexpr MoveCommand kMoves[] = {
+    {Shift::Up,     L"Move &up",        WXK_UP},
+    {Shift::Down,   L"Move &down",      WXK_DOWN},
+    {Shift::Top,    L"Move to &top",    WXK_HOME},
+    {Shift::Bottom, L"Move to &bottom", WXK_END},
+};
+
 class ColumnsDialog : public wxDialog {
 public:
     explicit ColumnsDialog(wxWindow* owner);
@@ -59,13 +72,12 @@ ColumnsDialog::ColumnsDialog(wxWindow* owner)
     auto* listLabel = new wxStaticText(this, wxID_ANY, L"&Columns:");
     list_ = new CheckList(this, FromDIP(wxSize(260, 220)));
 
-    auto* up     = new wxButton(this, wxID_ANY, L"Move &up");
-    auto* down   = new wxButton(this, wxID_ANY, L"Move &down");
-    auto* top    = new wxButton(this, wxID_ANY, L"Move to &top");
-    auto* bottom = new wxButton(this, wxID_ANY, L"Move to &bottom");
-
     auto* buttons = new wxBoxSizer(wxVERTICAL);
-    for (wxButton* button : {up, down, top, bottom}) {
+    for (const MoveCommand& move : kMoves) {
+        auto* button = new wxButton(this, wxID_ANY, move.label);
+        button->Bind(wxEVT_BUTTON, [this, shift = move.shift](wxCommandEvent&) {
+            MoveSelected(shift);
+        });
         buttons->Add(button, 0, wxEXPAND | wxBOTTOM, gap / 2);
     }
 
@@ -85,10 +97,6 @@ ColumnsDialog::ColumnsDialog(wxWindow* owner)
         CaptureChecks();
         ShowSet(static_cast<size_t>(index));
     });
-    up->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { MoveSelected(Shift::Up); });
-    down->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { MoveSelected(Shift::Down); });
-    top->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { MoveSelected(Shift::Top); });
-    bottom->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { MoveSelected(Shift::Bottom); });
     Bind(wxEVT_BUTTON, &ColumnsDialog::OnOk, this, wxID_OK);
     Bind(wxEVT_CHAR_HOOK, &ColumnsDialog::OnListShortcut, this);
 
@@ -177,12 +185,12 @@ void ColumnsDialog::OnOk(wxCommandEvent& event) {
 }
 
 void ColumnsDialog::OnListShortcut(wxKeyEvent& event) {
-    if (event.GetModifiers() == wxMOD_CONTROL && HasFocusWithin(list_)) {
-        switch (event.GetKeyCode()) {
-            case WXK_UP:   MoveSelected(Shift::Up);     return;
-            case WXK_DOWN: MoveSelected(Shift::Down);   return;
-            case WXK_HOME: MoveSelected(Shift::Top);    return;
-            case WXK_END:  MoveSelected(Shift::Bottom); return;
+    if (HasFocusWithin(list_)) {
+        for (const MoveCommand& move : kMoves) {
+            if (IsKey(event, move.key, wxMOD_CONTROL)) {
+                MoveSelected(move.shift);
+                return;
+            }
         }
     }
     event.Skip();

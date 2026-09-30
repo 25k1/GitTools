@@ -18,10 +18,8 @@ bool ShowFindDialog(wxWindow* owner, FindParams& params) {
 
     auto* label      = new wxStaticText(&dialog, wxID_ANY, L"Find &what:");
     auto* what       = new wxTextCtrl(&dialog, wxID_ANY, params.what);
-    auto* matchCase  = new wxCheckBox(&dialog, wxID_ANY, L"Match &case");
-    auto* wrapAround = new wxCheckBox(&dialog, wxID_ANY, L"Wrap &around");
-    matchCase->SetValue(params.matchCase);
-    wrapAround->SetValue(params.wrapAround);
+    auto* matchCase  = CreateCheckBox(&dialog, L"Match &case", params.matchCase);
+    auto* wrapAround = CreateCheckBox(&dialog, L"Wrap &around", params.wrapAround);
 
     const int gap = dialog.FromDIP(8);
 
