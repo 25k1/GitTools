@@ -58,7 +58,9 @@ void ForceForeground(wxTopLevelWindow* window) {
 
     if (GetForegroundWindow() != hwnd) {
         window->RequestUserAttention();
-    } else if (const HWND focus = GetFocus()) {
+    } else if (const HWND focus = GetFocus(); focus && front != hwnd) {
+        // Only a window this call brought up lacks a focus event; another one
+        // makes a screen reader repeat the focused item.
         NotifyWinEvent(EVENT_OBJECT_FOCUS, focus, OBJID_CLIENT, CHILDID_SELF);
     }
 }

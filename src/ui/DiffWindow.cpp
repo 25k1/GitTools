@@ -68,6 +68,7 @@ private:
     void Rerender(bool markers, size_t wrapWidth);
     void ToggleMarkers();
     void GoHome();
+    void UpdateLineStatus();
     void CheckCaretLineAndPlay();
     const std::wstring& FoldedText();
     bool FindInDiff(bool forward);
@@ -113,7 +114,9 @@ DiffFrame::DiffFrame(wxWindow* owner, const DiffWindowParams& params)
     font.FaceName(L"Consolas");
 #endif
     edit_->SetFont(wxFont(font));
+    CreateStatusBar();
     ShowDiffText();
+    UpdateLineStatus();
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(edit_, 1, wxEXPAND);
@@ -129,7 +132,7 @@ DiffFrame::DiffFrame(wxWindow* owner, const DiffWindowParams& params)
         event.Skip();
         CallAfter([this] { CheckCaretLineAndPlay(); });
     });
-    edit_->SetFocus();
+    SetInitialFocus(edit_);
 }
 
 DiffFrame::~DiffFrame() {
@@ -261,6 +264,7 @@ void DiffFrame::Rerender(bool markers, size_t wrapWidth) {
         pos.column = full - std::min(full, Hidden(pos.line));
         if (const long at = FromSource(pos); at >= 0) MoveCaret(edit_, at);
     }
+    UpdateLineStatus();
 }
 
 void DiffFrame::ToggleMarkers() {
@@ -286,10 +290,18 @@ void DiffFrame::GoHome() {
     MoveCaret(edit_, start + static_cast<long>(target));
 }
 
+void DiffFrame::UpdateLineStatus() {
+    SourcePos pos;
+    const size_t current = CaretSource(pos) ? pos.line + 1 : 0;
+    SetStatusText(L"ln " + std::to_wstring(current) + L" of " +
+                  std::to_wstring(source_.size()));
+}
+
 void DiffFrame::CheckCaretLineAndPlay() {
     const long line = CaretLine();
     if (line < 0 || line == lastLine_) return;
     lastLine_ = line;
+    UpdateLineStatus();
 
     if (static_cast<size_t>(line) >= layout_.size()) return;
     const std::wstring& source = source_[layout_[static_cast<size_t>(line)].source];
@@ -334,6 +346,7 @@ bool DiffFrame::FindInDiff(bool forward) {
     edit_->SetSelection(static_cast<long>(pos),
                         static_cast<long>(pos + needle.size()));
     lastLine_ = -1;
+    UpdateLineStatus();
     return true;
 }
 

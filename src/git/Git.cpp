@@ -73,6 +73,11 @@ constexpr wchar_t kLogFormat[]  =
     L"--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s";
 constexpr wchar_t kLogDate[]    = L"--date=format:%Y-%m-%d %H:%M:%S";
 constexpr size_t  kResidentPages = 8;
+// Each commit starts with a line holding just this byte; its shortstat line follows.
+constexpr wchar_t kStatFormat[] = L"--format=%x01";
+constexpr char    kStatMarker   = '\x01';
+// A row this far past the counted ones is a jump, not a step; waiting would freeze.
+constexpr size_t  kStatWaitRows = 100;
 
 constexpr std::wstring_view kFormatFlags[]   = {L"--oneline", L"--pretty"};
 constexpr std::wstring_view kFormatPrefix[]  = {L"--pretty=", L"--format="};
@@ -177,6 +182,24 @@ std::vector<std::wstring> DisplayArgs(const std::vector<std::wstring>& args) {
         }
     }
     return out;
+}
+
+// " 2 files changed, 39 insertions(+), 15 deletions(-)": git omits a zero count.
+CommitStat ParseShortStat(std::string_view line) {
+    CommitStat stat;
+    while (!line.empty()) {
+        const size_t comma = std::min(line.find(','), line.size());
+        std::string_view part = line.substr(0, comma);
+        line.remove_prefix(std::min(comma + 1, line.size()));
+
+        part.remove_prefix(std::min(part.find_first_not_of(' '), part.size()));
+        long long value = 0;
+        if (!ParseDigits(part.substr(0, part.find(' ')), value)) continue;
+        const int count = static_cast<int>(std::min(value, 1000000000LL));
+        if (part.ends_with("(+)")) stat.insertions = count;
+        if (part.ends_with("(-)")) stat.deletions = count;
+    }
+    return stat;
 }
 
 }
@@ -327,6 +350,108 @@ CommitListResult StartCommitLog(const std::vector<std::wstring>& logArgs,
     result.count        = result.loader->AcknowledgeCount();
     result.errorMessage = result.loader->ErrorMessage();
     return result;
+}
+
+CommitStatsLoader::CommitStatsLoader(const std::vector<std::wstring>& logArgs,
+                                     const std::wstring& cwd) {
+    // --full-diff keeps a pathspec from narrowing the counts below the commit's details.
+    worker_ = std::thread(&CommitStatsLoader::Run, this,
+                          Concat({L"log", kStatFormat, L"--shortstat", kDiffMerges,
+                                  L"--full-diff"},
+                                 StripFormatArgs(logArgs)),
+                          cwd);
+}
+
+CommitStatsLoader::~CommitStatsLoader() {
+    {
+        std::lock_guard lock(mu_);
+        stop_ = true;
+    }
+    canceller_.Cancel();
+    cv_.notify_all();
+    if (worker_.joinable()) worker_.join();
+}
+
+void CommitStatsLoader::Notify(std::function<void()> onStats) {
+    std::lock_guard lock(mu_);
+    notify_ = std::move(onStats);
+}
+
+void CommitStatsLoader::Acknowledge() {
+    std::lock_guard lock(mu_);
+    posted_ = false;
+}
+
+void CommitStatsLoader::Request(size_t count) {
+    {
+        std::lock_guard lock(mu_);
+        if (count <= wanted_) return;
+        wanted_ = count;
+    }
+    cv_.notify_all();
+}
+
+std::optional<CommitStat> CommitStatsLoader::At(size_t i, bool wait) {
+    std::unique_lock lock(mu_);
+    if (wait && !finished_ && i >= counted_ && i < counted_ + kStatWaitRows) {
+        wanted_ = std::max(wanted_, i + 1);
+        cv_.notify_all();
+        cv_.wait(lock, [&] { return stop_ || finished_ || i < counted_; });
+    }
+    if (i >= counted_) return std::nullopt;
+    return stats_[i];
+}
+
+void CommitStatsLoader::Run(std::vector<std::wstring> args, std::wstring cwd) {
+    RunGit(args, cwd, StdioMode::Capture, &canceller_,
+           [this](std::string_view bytes) { Consume(bytes); });
+    {
+        std::lock_guard lock(mu_);
+        if (stop_) return;
+        ParseLine(pending_);
+        finished_ = true;
+        counted_  = stats_.size();
+        Post();
+    }
+    cv_.notify_all();
+}
+
+void CommitStatsLoader::Consume(std::string_view bytes) {
+    pending_.append(bytes);
+    std::unique_lock lock(mu_);
+    if (stop_) return;
+
+    const size_t before = counted_;
+    const std::string_view buffered = pending_;
+    size_t start = 0;
+    for (size_t eol = buffered.find('\n'); eol != buffered.npos;
+         eol = buffered.find('\n', start)) {
+        ParseLine(buffered.substr(start, eol - start));
+        start = eol + 1;
+    }
+    pending_.erase(0, start);
+
+    if (counted_ != before) {
+        cv_.notify_all();
+        Post();
+    }
+    cv_.wait(lock, [this] { return stop_ || counted_ < wanted_; });
+}
+
+void CommitStatsLoader::Post() {
+    if (!notify_ || posted_) return;
+    posted_ = true;
+    notify_();
+}
+
+void CommitStatsLoader::ParseLine(std::string_view line) {
+    if (line.size() == 1 && line[0] == kStatMarker) {
+        counted_ = stats_.size();
+        stats_.emplace_back();
+    } else if (line.starts_with(' ') && !stats_.empty()) {
+        stats_.back() = ParseShortStat(line);
+        counted_      = stats_.size();
+    }
 }
 
 std::wstring QueryBranchLabel(const std::vector<std::wstring>& logArgs,

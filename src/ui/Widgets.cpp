@@ -6,6 +6,7 @@
 #include <wx/event.h>
 #include <wx/menu.h>
 #include <wx/sizer.h>
+#include <wx/window.h>
 
 #include <cwchar>
 #include <memory>
@@ -19,6 +20,14 @@ void BindKey(wxWindow* window, int key, int modifiers, std::function<void()> act
         if (IsKey(event, key, modifiers)) action();
         else                              event.Skip();
     });
+}
+
+void SetInitialFocus(wxWindow* control) {
+#ifdef _WIN32
+    wxGetTopLevelParent(control)->WXSetPendingFocus(control);
+#else
+    control->SetFocus();
+#endif
 }
 
 namespace {

@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -109,6 +110,49 @@ struct CommitListResult {
 CommitListResult StartCommitLog(const std::vector<std::wstring>& logArgs,
                                 const std::wstring& cwd,
                                 size_t first = kCommitPage);
+
+struct CommitStat {
+    int insertions = 0;
+    int deletions  = 0;
+};
+
+// Line counts per row of the same log from a separate git log --shortstat, which
+// needs a diff per commit and so trails the commit list.
+class CommitStatsLoader {
+public:
+    CommitStatsLoader(const std::vector<std::wstring>& logArgs,
+                      const std::wstring& cwd);
+    ~CommitStatsLoader();
+
+    CommitStatsLoader(const CommitStatsLoader&)            = delete;
+    CommitStatsLoader& operator=(const CommitStatsLoader&) = delete;
+
+    void Notify(std::function<void()> onStats);
+    void Acknowledge();
+    void Request(size_t count);
+
+    // wait blocks until row i is counted, unless the log is too far behind it.
+    std::optional<CommitStat> At(size_t i, bool wait);
+
+private:
+    void Run(std::vector<std::wstring> args, std::wstring cwd);
+    void Consume(std::string_view bytes);
+    void ParseLine(std::string_view line);
+    void Post();
+
+    std::mutex              mu_;
+    std::condition_variable cv_;
+    ProcessCanceller        canceller_;
+    std::string             pending_;
+    std::vector<CommitStat> stats_;
+    size_t                  counted_  = 0;
+    size_t                  wanted_   = kCommitPage;
+    bool                    finished_ = false;
+    bool                    stop_     = false;
+    bool                    posted_   = false;
+    std::function<void()>   notify_;
+    std::thread             worker_;
+};
 
 std::wstring QueryBranchLabel(const std::vector<std::wstring>& logArgs,
                               const std::wstring& cwd);

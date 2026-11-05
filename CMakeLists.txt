@@ -100,7 +100,9 @@ if(MSVC)
         )
     endif()
 
-    add_compile_definitions(_USE_STD_VECTOR_ALGORITHMS=0)
+    # _HAS_STATIC_RTTI=0 keeps std::function from emitting a type descriptor
+    # for every stored lambda despite /GR-.
+    add_compile_definitions(_USE_STD_VECTOR_ALGORITHMS=0 _HAS_STATIC_RTTI=0)
 
     if(NOT GITTOOLS_EXCEPTIONS)
         string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
@@ -218,7 +220,11 @@ else()
             set(CMAKE_AR "${GITTOOLS_LLVM_AR}")
             set(CMAKE_RANLIB "${GITTOOLS_LLVM_RANLIB}")
             add_compile_options("$<${GITTOOLS_OPT}:-flto>")
-            add_link_options("--ld-path=${GITTOOLS_LLD}" "$<${GITTOOLS_OPT_LINK}:-flto>")
+            add_link_options(
+                "--ld-path=${GITTOOLS_LLD}"
+                "$<${GITTOOLS_OPT_LINK}:-flto>"
+                "$<${GITTOOLS_OPT_LINK}:-Wl,--icf=all>"
+            )
             if(GITTOOLS_VFE)
                 add_compile_options(
                     "$<${GITTOOLS_OPT_CXX}:-fwhole-program-vtables>"
@@ -267,14 +273,17 @@ set(GITTOOLS_WX_OFF
     wxUSE_ADDREMOVECTRL
     wxUSE_AFM_FOR_POSTSCRIPT
     wxUSE_ANIMATIONCTRL
+    wxUSE_APPLE_IEEE
     wxUSE_ARCHIVE_STREAMS
     wxUSE_ARTPROVIDER_STD
     wxUSE_ARTPROVIDER_TANGO
     wxUSE_AUI
     wxUSE_BANNERWINDOW
+    wxUSE_BASE64
     wxUSE_BITMAPCOMBOBOX
     wxUSE_BMPBUTTON
     wxUSE_BUSYINFO
+    wxUSE_CARET
     wxUSE_CHECKLISTBOX
     wxUSE_CHOICEBOOK
     wxUSE_CHOICEDLG
@@ -320,11 +329,13 @@ set(GITTOOLS_WX_OFF
     wxUSE_HOTKEY
     wxUSE_HTML
     wxUSE_HYPERLINKCTRL
+    wxUSE_ICO_CUR
     wxUSE_IFF
     wxUSE_INFOBAR
     wxUSE_INICONF
     wxUSE_INTL
     wxUSE_IPC
+    wxUSE_IPV6
     wxUSE_JOYSTICK
     wxUSE_LIBJPEG
     wxUSE_LIBPNG
@@ -351,12 +362,14 @@ set(GITTOOLS_WX_OFF
     wxUSE_ON_FATAL_EXCEPTION
     wxUSE_OPENGL
     wxUSE_OWNER_DRAWN
+    wxUSE_PALETTE
     wxUSE_PCX
     wxUSE_PNM
     wxUSE_POPUPWIN
     wxUSE_POSTSCRIPT
     wxUSE_POSTSCRIPT_ARCHITECTURE_IN_MSW
     wxUSE_PREFERENCES_EDITOR
+    wxUSE_PRINTF_POS_PARAMS
     wxUSE_PRINTING_ARCHITECTURE
     wxUSE_PRIVATE_FONTS
     wxUSE_PROGRESSDLG
@@ -380,7 +393,9 @@ set(GITTOOLS_WX_OFF
     wxUSE_SNGLINST_CHECKER
     wxUSE_SOCKETS
     wxUSE_SOUND
+    wxUSE_SPELLCHECK
     wxUSE_SPLASH
+    wxUSE_SPLINES
     wxUSE_SPLITTER
     wxUSE_STACKWALKER
     wxUSE_STARTUP_TIPS
@@ -389,6 +404,7 @@ set(GITTOOLS_WX_OFF
     wxUSE_STATLINE
     wxUSE_STC
     wxUSE_STD_IOSTREAM
+    wxUSE_STOPWATCH
     wxUSE_SVG
     wxUSE_TARSTREAM
     wxUSE_TASKBARBUTTON
@@ -431,7 +447,9 @@ set(GITTOOLS_WX_ON
 )
 if(WIN32)
     list(APPEND GITTOOLS_WX_OFF
+        wxUSE_ANY
         wxUSE_DATAVIEWCTRL
+        wxUSE_DRAG_AND_DROP
         wxUSE_GRAPHICS_CONTEXT
         wxUSE_HEADERCTRL
         wxUSE_TEXTBUFFER
@@ -440,6 +458,7 @@ if(WIN32)
 else()
     list(APPEND GITTOOLS_WX_ON
         wxUSE_DATAVIEWCTRL
+        wxUSE_DRAG_AND_DROP
         wxUSE_HEADERCTRL
         wxUSE_NATIVE_DATAVIEWCTRL
     )
@@ -448,7 +467,6 @@ else()
         wxUSE_LIBMSPACK
         wxUSE_LIBNOTIFY
         wxUSE_LIBSDL
-        wxUSE_SPELLCHECK
         wxUSE_XTEST
     )
 endif()

@@ -63,6 +63,10 @@ void FinishDialog(wxDialog& dialog, wxSizer* sizer, int gap);
 
 wxTextCtrl* CreateReadOnlyText(wxWindow* parent, long extraStyle = 0);
 
+// Focus for a control of a frame that is not shown yet. Focusing it directly
+// activates the hidden frame, and the activation focuses it once more.
+void SetInitialFocus(wxWindow* control);
+
 void SetReadOnlyText(wxTextCtrl* edit, const std::wstring& text);
 
 void MoveCaret(wxTextCtrl* edit, long position);

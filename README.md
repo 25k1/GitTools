@@ -82,7 +82,7 @@ Settings live in your global git config under `gittools`. File > Options and the
 | `gittools.audiodevice` | default device | Output device id for the diff line sounds (WASAPI on Windows, PulseAudio or ALSA on Linux) |
 | `gittools.diffmarkers` | `true` | Show the `+`/`-` markers in the diff viewer; `Ctrl+I` there toggles it |
 | `gittools.linewrap` | `0` | Wrap diff viewer lines at this many characters; `0` turns wrapping off |
-| `gittools.debounce` | `250` | Milliseconds to wait after moving through commits before loading the selected commit's details; `0` loads immediately |
+| `gittools.debounce` | `250` | Milliseconds to wait after moving through commits before loading the selected commit's details; `0` loads immediately and takes the commit list's insertions/deletions from `git log --shortstat`, so they are there as soon as a row gets focus (may be slow on network drives) |
 | `gittools.unloadfarcommits` | `false` | Drop commits far from view in huge logs and reload them from git when needed |
 | `gittools.commitcolumns` | `subject,author,date,insertions,deletions` | Column order of the commit list; a `-` prefix hides a column. Options > Configure columns edits it |
 | `gittools.changecolumns` | `name,state,insertions,deletions` | Same for the changed files list |

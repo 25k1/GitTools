@@ -49,7 +49,7 @@ BranchFrame::BranchFrame(BranchWindowParams params)
 
     list_->WhenActivated([this] { OnCheckout(); });
     BindKey(list_, WXK_F5, wxMOD_NONE, [this] { Reload(); });
-    list_->SetFocus();
+    SetInitialFocus(list_);
 }
 
 void BranchFrame::OnOptionsChanged() {

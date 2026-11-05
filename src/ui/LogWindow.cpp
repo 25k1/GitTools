@@ -46,6 +46,16 @@ bool QueryMentions(const std::wstring& query, const std::wstring& name) {
     return false;
 }
 
+// The detail load lands after a screen reader has read the focused row, so with no
+// debounce the list counts lines itself; that needs a diff per commit, which is slow
+// on network drives.
+bool ShouldLoadCommitStats() {
+    if (DebounceMs() > 0) return false;
+    return std::ranges::any_of(VisibleColumns(kCommitColumns), [](size_t column) {
+        return column == kCommitInsertions || column == kCommitDeletions;
+    });
+}
+
 std::wstring DescribeDates(const DateRange& dates) {
     std::vector<std::wstring> parts;
     if (!dates.since.empty()) parts.push_back(L"from " + dates.since);
@@ -99,6 +109,8 @@ private:
     void OnDetailLoaded(int token, const std::shared_ptr<CommitDetails>& details);
 
     void AttachLoader();
+    void StartStats();
+    void OnStatsLoaded();
     void AppendLoadedCommits();
     void RequestCommitsNear(long row);
     bool ReloadCommitList();
@@ -110,20 +122,22 @@ private:
     void CopySelectedSha();
     void ShowCommitsContextMenu(const wxPoint& at);
 
-    LogWindowParams     params_;
-    VirtualList*        commits_ = nullptr;
-    wxTextCtrl*         message_ = nullptr;
-    ChangeList*         changes_ = nullptr;
-    std::wstring        messageShown_;
-    size_t              shown_      = 0;
-    CommitDetails       detail_;
-    long long           insertions_ = 0;
-    long long           deletions_  = 0;
-    wxTimer             loadTimer_;
-    int                 debounceMs_  = DebounceMs();
-    bool                loadPending_ = false;
-    DateRange           dates_;
-    CommitDetailsLoader detailLoader_;
+    LogWindowParams                    params_;
+    std::unique_ptr<CommitStatsLoader> stats_;
+    mutable long                       statsBlankRow_ = -1;
+    VirtualList*                       commits_ = nullptr;
+    wxTextCtrl*                        message_ = nullptr;
+    ChangeList*                        changes_ = nullptr;
+    std::wstring                       messageShown_;
+    size_t                             shown_      = 0;
+    CommitDetails                      detail_;
+    long long                          insertions_ = 0;
+    long long                          deletions_  = 0;
+    wxTimer                            loadTimer_;
+    int                                debounceMs_  = DebounceMs();
+    bool                               loadPending_ = false;
+    DateRange                          dates_;
+    CommitDetailsLoader                detailLoader_;
 };
 
 LogFrame::LogFrame(LogWindowParams params)
@@ -169,11 +183,12 @@ LogFrame::LogFrame(LogWindowParams params)
 
     if (params_.loader) AttachLoader();
     if (CommitCount() > 0) commits_->SelectOnly(0);
-    commits_->SetFocus();
+    SetInitialFocus(commits_);
 }
 
 LogFrame::~LogFrame() {
     loadTimer_.Stop();
+    stats_.reset();
     params_.loader.reset();
     detailLoader_.Stop();
 }
@@ -199,6 +214,7 @@ void LogFrame::OnOptionsChanged() {
     debounceMs_ = DebounceMs();
     if (params_.loader) {
         params_.loader->SetUnloadFar(ConfigGetBool(kUnloadFarCommitsKey, false));
+        if ((stats_ != nullptr) != ShouldLoadCommitStats()) StartStats();
     }
 }
 
@@ -224,6 +240,14 @@ std::wstring LogFrame::CommitCell(long row, long column) const {
         case kCommitDate:    return std::move(c.date);
         case kCommitInsertions:
         case kCommitDeletions:
+            if (stats_) {
+                if (const std::optional<CommitStat> stat =
+                        stats_->At(static_cast<size_t>(row), row == SelectedIndex())) {
+                    return std::to_wstring(column == kCommitInsertions ? stat->insertions
+                                                                       : stat->deletions);
+                }
+                if (statsBlankRow_ < 0 || row < statsBlankRow_) statsBlankRow_ = row;
+            }
             if (c.fullSha != detail_.sha || row != SelectedIndex()) return {};
             return std::to_wstring(column == kCommitInsertions ? insertions_
                                                                : deletions_);
@@ -318,6 +342,30 @@ void LogFrame::AttachLoader() {
     shown_ = params_.loader->AcknowledgeCount();
     params_.loader->Notify([this] { CallAfter([this] { AppendLoadedCommits(); }); });
     commits_->ResetRows(shown_);
+    StartStats();
+}
+
+void LogFrame::StartStats() {
+    stats_.reset();
+    statsBlankRow_ = -1;
+    if (!ShouldLoadCommitStats()) return;
+    stats_ = std::make_unique<CommitStatsLoader>(WithDateRange(params_.logArgs, dates_),
+                                                 params_.repo.cwd);
+    if (const long row = SelectedIndex(); row >= 0) {
+        stats_->Request(static_cast<size_t>(row) + 1 + kCommitPage);
+    }
+    stats_->Notify([this] { CallAfter([this] { OnStatsLoaded(); }); });
+}
+
+void LogFrame::OnStatsLoaded() {
+    if (!stats_) return;
+    stats_->Acknowledge();
+    // A repaint per counted commit keeps the window too busy to answer a screen reader.
+    if (statsBlankRow_ < 0 || !stats_->At(static_cast<size_t>(statsBlankRow_), false)) {
+        return;
+    }
+    statsBlankRow_ = -1;
+    commits_->Refresh();
 }
 
 void LogFrame::AppendLoadedCommits() {
@@ -331,6 +379,7 @@ void LogFrame::AppendLoadedCommits() {
 void LogFrame::RequestCommitsNear(long row) {
     if (!params_.loader || row < 0) return;
     const size_t next = static_cast<size_t>(row) + 1;
+    if (stats_) stats_->Request(next + kCommitPage);
     if (next + kCommitPage / 2 >= CommitCount()) {
         params_.loader->Request(next + kCommitPage);
     }

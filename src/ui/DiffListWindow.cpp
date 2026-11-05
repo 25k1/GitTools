@@ -6,6 +6,7 @@
 #include "ui/ChangeList.hpp"
 #include "ui/DiffWindow.hpp"
 #include "ui/MenuFrame.hpp"
+#include "ui/Widgets.hpp"
 
 #include <wx/panel.h>
 #include <wx/sizer.h>
@@ -64,7 +65,7 @@ DiffListFrame::DiffListFrame(DiffListParams params, std::vector<FileDiff> files)
 
     BuildMenus();
     list_->SelectOnly(0);
-    list_->SetFocus();
+    SetInitialFocus(list_);
 }
 
 std::vector<MenuSection> DiffListFrame::Menus() {

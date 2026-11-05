@@ -13,6 +13,11 @@ std::wstring ExecutablePath();
 
 std::wstring CurrentDirectory();
 
+// Git runs `!` aliases from the work tree root and passes the caller's
+// subdirectory in GIT_PREFIX; this moves back there. The variable is cleared
+// so detached children and nested git calls don't apply it again.
+void EnterGitPrefix();
+
 bool SpawnDetachedProcess(const std::wstring& cwd,
                           const std::wstring& executable,
                           const std::vector<std::wstring>& args);

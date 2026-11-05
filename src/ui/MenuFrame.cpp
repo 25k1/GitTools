@@ -17,7 +17,12 @@ constexpr int kFirstMenuId = wxID_HIGHEST + 1000;
 }
 
 MenuFrame::MenuFrame(wxWindow* parent, const std::wstring& title, const wxSize& size)
-    : wxFrame(parent, wxID_ANY, title) {
+    // Keeps a child frame behind its parent's single Alt+Tab/taskbar entry, like a
+    // dialog: FLOAT_ON_PARENT makes the parent its owner, NO_TASKBAR drops the
+    // WS_EX_APPWINDOW that wxMSW otherwise adds to frames with a parent.
+    : wxFrame(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize,
+              wxDEFAULT_FRAME_STYLE |
+                  (parent ? wxFRAME_FLOAT_ON_PARENT | wxFRAME_NO_TASKBAR : 0)) {
     SetSize(FromDIP(size));
     Bind(wxEVT_MENU, [this](wxCommandEvent& event) {
         if (!RunMenuEntry(entries_, event.GetId() - kFirstMenuId)) event.Skip();
