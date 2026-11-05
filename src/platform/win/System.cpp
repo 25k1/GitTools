@@ -42,6 +42,16 @@ std::wstring CurrentDirectory() {
     return out;
 }
 
+void EnterGitPrefix() {
+    constexpr wchar_t kName[] = L"GIT_PREFIX";
+    const DWORD len = GetEnvironmentVariableW(kName, nullptr, 0);
+    if (len == 0) return;
+    std::wstring prefix(len, L'\0');
+    prefix.resize(GetEnvironmentVariableW(kName, prefix.data(), len));
+    if (!prefix.empty()) SetCurrentDirectoryW(prefix.c_str());
+    SetEnvironmentVariableW(kName, nullptr);
+}
+
 bool SpawnDetachedProcess(const std::wstring& cwd,
                           const std::wstring& executable,
                           const std::vector<std::wstring>& args) {

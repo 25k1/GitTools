@@ -94,6 +94,8 @@ constexpr Command kCommands[] = {
 }
 
 int Dispatch(int argc, wchar_t** argv) {
+    EnterGitPrefix();
+
     const std::wstring_view name =
         (argc >= 2) ? std::wstring_view{argv[1]} : std::wstring_view{};
     const auto command = std::ranges::find(kCommands, name, &Command::name);

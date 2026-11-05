@@ -44,6 +44,13 @@ std::wstring CurrentDirectory() {
     return Utf8ToWide(buf.c_str());
 }
 
+void EnterGitPrefix() {
+    const char* prefix = std::getenv("GIT_PREFIX");
+    if (prefix == nullptr) return;
+    if (*prefix != '\0') chdir(prefix);
+    unsetenv("GIT_PREFIX");
+}
+
 bool SpawnDetachedProcess(const std::wstring& cwd,
                           const std::wstring& executable,
                           const std::vector<std::wstring>& args) {
